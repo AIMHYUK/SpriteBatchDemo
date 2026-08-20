@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpriteBatchDemo — 문서</title>
+<style>
+  :root{
+    --bg:#0d0f14; --panel:#151922; --panel2:#1b2030; --line:#262c3a;
+    --ink:#e8ebf2; --sub:#a4adbf; --dim:#7b8494;
+    --accent:#5ad1ff; --accent2:#7cf6b0; --warn:#ffcf6b; --hot:#ff6b9d;
+    --mono:'Cascadia Code','Consolas',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Pretendard','Segoe UI',system-ui,-apple-system,sans-serif;
+    line-height:1.75; letter-spacing:-.01em;
+  }
+  .wrap{max-width:940px; margin:0 auto; padding:0 22px 100px}
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono); font-size:.9em; background:#000; color:#cfe6ff;
+    padding:.1em .4em; border-radius:5px; border:1px solid var(--line)}
+
+  /* header */
+  header{padding:64px 0 40px; border-bottom:1px solid var(--line); margin-bottom:44px}
+  .eyebrow{font-family:var(--mono); font-size:13px; color:var(--accent2);
+    letter-spacing:.14em; text-transform:uppercase; margin:0 0 14px}
+  h1{font-size:clamp(30px,5vw,46px); line-height:1.15; margin:0 0 16px; font-weight:800}
+  .lede{font-size:18px; color:var(--sub); margin:0 0 22px; max-width:70ch}
+  .meta{display:flex; flex-wrap:wrap; gap:8px}
+  .chip{font-family:var(--mono); font-size:12.5px; color:var(--sub);
+    background:var(--panel); border:1px solid var(--line); padding:5px 11px; border-radius:20px}
+
+  h2{font-size:25px; margin:56px 0 6px; font-weight:750; letter-spacing:-.02em}
+  h2 .num{font-family:var(--mono); color:var(--dim); font-size:17px; margin-right:12px}
+  h3{font-size:18px; margin:30px 0 4px; color:var(--accent)}
+  p{margin:14px 0}
+  .sub{color:var(--sub)}
+  hr{border:0; border-top:1px solid var(--line); margin:52px 0}
+
+  /* hero result */
+  .hero{
+    margin:40px 0; padding:34px; border-radius:16px;
+    background:linear-gradient(135deg,#141b26,#1a1330);
+    border:1px solid #2e3550;
+  }
+  .hero .big{font-family:var(--mono); font-size:clamp(38px,8vw,68px); font-weight:800;
+    line-height:1; background:linear-gradient(90deg,var(--accent2),var(--accent));
+    -webkit-background-clip:text; background-clip:text; color:transparent}
+  .hero .cap{color:var(--sub); margin-top:12px; font-size:16px}
+  .hero .cap b{color:var(--ink)}
+
+  /* stat row */
+  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:24px 0}
+  .stat{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px}
+  .stat .k{font-size:12.5px; color:var(--dim); font-family:var(--mono)}
+  .stat .v{font-size:24px; font-weight:750; margin-top:6px}
+  .stat .v small{font-size:14px; color:var(--sub); font-weight:500}
+
+  /* screenshots */
+  .shots{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:26px 0}
+  figure{margin:0; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden}
+  figure img{display:block; width:100%; height:auto}
+  figcaption{padding:12px 14px; font-size:13.5px; color:var(--sub)}
+  figcaption b{color:var(--ink); font-family:var(--mono)}
+  .tagN{color:var(--hot)} .tagB{color:var(--accent2)}
+
+  /* tables */
+  .tblwrap{overflow-x:auto; margin:20px 0; border:1px solid var(--line); border-radius:12px}
+  table{border-collapse:collapse; width:100%; font-size:14.5px; min-width:520px}
+  th,td{text-align:left; padding:12px 16px; border-bottom:1px solid var(--line); vertical-align:top}
+  thead th{background:var(--panel2); color:var(--sub); font-weight:600; font-size:13px;
+    position:sticky; top:0}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:#12161f}
+  td.mono,th.mono{font-family:var(--mono)}
+  .good{color:var(--accent2); font-weight:700}
+  .old{color:var(--dim)}
+
+  /* callout */
+  .note{border-left:3px solid var(--accent); background:var(--panel);
+    padding:14px 18px; border-radius:0 10px 10px 0; margin:20px 0; color:var(--sub)}
+  .note b{color:var(--ink)}
+  .diagram{font-family:var(--mono); font-size:13px; color:var(--sub); background:#000;
+    border:1px solid var(--line); border-radius:10px; padding:16px 18px; overflow-x:auto; white-space:pre}
+
+  ul{margin:14px 0; padding-left:22px} li{margin:7px 0}
+  .done{color:var(--accent2)} .strike{color:var(--dim); text-decoration:line-through}
+  footer{margin-top:60px; padding-top:24px; border-top:1px solid var(--line); color:var(--dim); font-size:13.5px}
+  @media(max-width:680px){
+    .stats{grid-template-columns:1fr} .shots{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Direct3D 11 · C++ Rendering</p>
+  <h1>SpriteBatchDemo</h1>
+  <p class="lede">엔진 없이 Win32와 Direct3D 11만으로 만든 2D 스프라이트 렌더러.
+  같은 장면을 <b>개별 드로우(Naive)</b>와 <b>배치(Batched)</b>로 실시간 전환하며,
+  드로우 콜 방식이 성능에 주는 영향을 <b>숫자로 실측</b>한다.</p>
+  <div class="meta">
+    <span class="chip">DirectX 11</span>
+    <span class="chip">C++17 / x64</span>
+    <span class="chip">무외부의존</span>
+    <span class="chip">AMD Radeon 780M (내장)</span>
+    <span class="chip"><a href="https://github.com/AIMHYUK/SpriteBatchDemo">github.com/AIMHYUK/SpriteBatchDemo</a></span>
+  </div>
+</header>
+
+<!-- HERO -->
+<section>
+  <h2><span class="num">01</span>핵심 결과</h2>
+  <p>두 모드는 <b>같은 스프라이트 20,000개를 똑같은 픽셀</b>로 그린다. 다른 것은 그리는 <i>방법</i>뿐이다.
+  그 결과 렌더 스레드가 드로우를 제출하는 <b>CPU 시간</b>이 이만큼 갈렸다.</p>
+
+  <div class="hero">
+    <div class="big">약 2,900×</div>
+    <div class="cap"><b>CPU 제출 시간 감소</b> — Naive 2.883 ms → Batched 0.001 ms</div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">DRAW CALLS</div><div class="v">20,000 <small>→ 1</small></div></div>
+    <div class="stat"><div class="k">CPU 제출 시간</div><div class="v">2.883 <small>→ 0.001 ms</small></div></div>
+    <div class="stat"><div class="k">총 프레임 시간</div><div class="v">3.089 <small>→ 1.937 ms</small></div></div>
+  </div>
+
+  <div class="note"><b>왜 두 지표를 나눠 보나:</b> 총 프레임 시간은 GPU가 하는 실제 렌더링(양쪽 동일)에
+  바닥이 묶여 1.6배밖에 안 준다. 하지만 CPU가 드로우를 던지는 비용은 Naive(2만 번) vs Batched(1번)라
+  약 2,900배 차이다. 게임 클라이언트의 병목은 대개 <b>렌더 스레드 CPU 시간</b>이므로, 이 지표라야
+  배칭의 진짜 이득이 보인다.</div>
+</section>
+
+<!-- SCREENSHOTS -->
+<section>
+  <h2><span class="num">02</span>같은 결과, 다른 방법</h2>
+  <p class="sub">두 화면은 픽셀 단위로 동일하다(같은 도형·색·배치). 제목 표시줄의 수치만 다르다.</p>
+  <div class="shots">
+    <figure>
+      <img src="images/naive.png" alt="Naive 모드 실행 화면">
+      <figcaption><b class="tagN">Naive</b> · 드로우콜 20,000 · CPU제출 2.883 ms · 324 FPS<br>
+      스프라이트마다 정점을 GPU에 올리고 그린다(2만 번 반복).</figcaption>
+    </figure>
+    <figure>
+      <img src="images/batched.png" alt="Batched 모드 실행 화면">
+      <figcaption><b class="tagB">Batched</b> · 드로우콜 1 · CPU제출 0.001 ms · 516 FPS<br>
+      한 버퍼에 구워 한 번에 그린다.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<hr>
+
+<!-- COMPARISON -->
+<section>
+  <h2><span class="num">03</span>MiniD3D11Renderer에서 무엇이 달라졌나</h2>
+  <p>이 프로젝트는 <a href="https://github.com/AIMHYUK/MiniD3D11Renderer">MiniD3D11Renderer</a>(스프라이트 하나 그리기)에서
+  바로 이어진다. 뼈대(Common/Window/Renderer/FrameTimer)는 그대로 물려받고, 아래를 확장했다.</p>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th>항목</th><th>MiniD3D11Renderer</th><th>SpriteBatchDemo</th><th>왜 바꿨나</th></tr></thead>
+    <tbody>
+      <tr><td>목표</td><td class="old">스프라이트 1개</td><td class="good">20,000개 · Naive/Batched</td><td>배칭 효과를 측정하려면 다수·두 경로 필요</td></tr>
+      <tr><td>정점 좌표</td><td class="old">단위 사각형 + 상수버퍼</td><td class="good">픽셀 좌표를 정점에 구움</td><td>위치가 CB에 있으면 배칭 불가</td></tr>
+      <tr><td>드로우</td><td class="mono old">DrawIndexed(6) 1번</td><td class="mono good">Naive N번 / Batched 1번</td><td>두 방식의 비용 차이가 주제</td></tr>
+      <tr><td>인덱스</td><td class="mono old">uint16</td><td class="mono good">uint32</td><td>N×4 정점이 65,535 초과</td></tr>
+      <tr><td>VSync</td><td class="mono old">Present(1,0) 켬</td><td class="mono good">Present(0, TEARING) 끔</td><td>성능차를 보려면 상한 해제</td></tr>
+      <tr><td>계측</td><td class="old">평균 FPS</td><td class="good">CPU 제출 ms + 프레임 ms</td><td>배칭이 이기는 곳은 CPU</td></tr>
+      <tr><td>텍스처</td><td class="old">없음(정점 색)</td><td class="good">코드 생성 아틀라스 + UV</td><td>게임다움 + 텍스처 바인딩 절약</td></tr>
+      <tr><td>블렌딩</td><td class="old">없음</td><td class="good">알파 블렌딩</td><td>도형 가장자리 처리</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- TECH -->
+<section>
+  <h2><span class="num">04</span>기술 노트</h2>
+
+  <h3>정점 베이킹 — 단위 사각형+상수버퍼 → 픽셀 좌표</h3>
+  <p>MiniD3D11Renderer는 단위 사각형(0~1) 하나에 위치를 상수 버퍼로 넘겼다. 스프라이트 하나엔 깔끔하지만,
+  위치가 CB에 있어 개수만큼 CB를 바꿔 그려야 한다 = <b>배칭 불가</b>. 그래서 각 스프라이트의 네 꼭짓점을
+  픽셀 좌표로 CPU에서 미리 구워, 모두 같은 좌표계에 두고 한 버퍼로 묶었다.</p>
+  <div class="diagram">MiniD3D11Renderer:  단위 사각형 1개  +  상수버퍼(위치)  →  스프라이트 1개
+SpriteBatchDemo:    픽셀 좌표 N×4개(버퍼에 구움)        →  스프라이트 N개 (배칭 가능)</div>
+
+  <h3>두 경로 — Naive vs Batched</h3>
+  <p><b>Naive</b>는 실무의 순진한 경로: 스프라이트마다 정점 4개를 동적 버퍼에 <code>Map(WRITE_DISCARD)</code>로
+  올리고 → 그린다, 를 N번. <b>Batched</b>는 IMMUTABLE 버퍼에 전부 구워 <code>DrawIndexed(N*6)</code> 한 번.</p>
+  <div class="note">처음엔 Naive를 "가장 싸게"(오프셋만 바꿔 그리기) 만들었더니 격차가 1.35배뿐이었다.
+  드로우 콜당 ~16ns라 GPU 렌더 비용에 묻힌 것. <b>실무형 per-object 경로</b>로 바꾸고서야 의미 있는 차이가 났다.</div>
+
+  <h3>VSync 함정 — Present(0,0)만으론 안 풀린다</h3>
+  <p>SyncInterval을 0으로 줘도 두 모드가 똑같이 <b>16.677ms(정확히 60FPS)</b>로 나왔다. 원인은
+  <b>플립 모델 + 창모드</b> — DWM(윈도우 합성기)이 주사율로 다시 묶는다. 진짜로 풀려면 tearing을 켜야 한다:
+  <code>IDXGIFactory5</code>로 지원 확인 → 스왑체인/ResizeBuffers에 <code>ALLOW_TEARING</code> 플래그 →
+  <code>Present(0, DXGI_PRESENT_ALLOW_TEARING)</code>. 이걸 넣고서야 프레임 시간이 갈라졌다.</p>
+
+  <h3>텍스처 아틀라스 (코드 생성)</h3>
+  <p>도형 4종(원·링·다이아몬드·+)을 256×256 한 장에 코드로 그린다(외부 이미지·라이브러리 없음).
+  스프라이트마다 UV로 하나씩 뽑아 쓴다. <b>한 장에 모아둔 덕에 텍스처 바인딩을 스프라이트마다 바꿀 필요가 없어</b>,
+  SRV 한 번으로 2만 개를 배칭 한 번에 그린다 — 실제 엔진이 아틀라스로 state change를 줄이는 이유 그대로다.
+  알파 블렌딩으로 가장자리를 배경과 섞어 파티클처럼 보이게 했다.</p>
+</section>
+
+<hr>
+
+<!-- RESULTS -->
+<section>
+  <h2><span class="num">05</span>측정 결과</h2>
+  <p class="sub">AMD Radeon 780M(내장), 1280×720, VSync OFF(ALLOW_TEARING), Release, 스프라이트 20,000개</p>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th>모드</th><th class="mono">드로우 콜</th><th class="mono">CPU 제출 시간</th><th class="mono">총 프레임 시간</th><th class="mono">FPS</th></tr></thead>
+    <tbody>
+      <tr><td class="tagN">Naive</td><td class="mono">20,000</td><td class="mono">2.883 ms</td><td class="mono">3.089 ms</td><td class="mono">324</td></tr>
+      <tr><td class="tagB">Batched</td><td class="mono">1</td><td class="mono good">0.001 ms</td><td class="mono">1.937 ms</td><td class="mono">516</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul>
+    <li><b>CPU 제출 시간 약 2,900배 감소</b> (2.883 → 0.001 ms) — 헤드라인</li>
+    <li>총 프레임 시간 1.6배 개선 (GPU 바닥에 묶임)</li>
+    <li>드로우 콜 20,000 → 1</li>
+  </ul>
+</section>
+
+<!-- STRUCTURE -->
+<section>
+  <h2><span class="num">06</span>파일 구조</h2>
+  <div class="diagram">src/
+  main.cpp       진입점. 창과 렌더러를 연결하고 게임 루프를 돌린다.
+  Window.*       Win32 창 하나. D3D를 모른다. 크기 변경·키 입력은 콜백으로만.
+  Renderer.*     디바이스·스왑체인·스프라이트 버퍼 소유, Naive/Batched로 한 프레임.
+  FrameTimer.h   QueryPerformanceCounter 기반 평균 FPS / 프레임 시간(ms).
+  Common.*       ComPtr 별칭, HRESULT 검사 매크로, exe 기준 경로 해석.
+shaders/
+  Sprite.vs.hlsl 픽셀 → NDC 변환, UV 전달.
+  Sprite.ps.hlsl 아틀라스 샘플 × 정점 색, 알파 블렌딩.</div>
+</section>
+
+<!-- NEXT -->
+<section>
+  <h2><span class="num">07</span>다음 단계</h2>
+  <ul>
+    <li class="done">✔ 텍스처 아틀라스 — 텍스처 전환(state change) 제거 <span class="strike">(완료)</span></li>
+    <li><b>움직이는 스프라이트</b> — 매 프레임 위치를 바꿔 DYNAMIC 정점 버퍼 배칭</li>
+    <li><b>인스턴싱</b> — 단위 사각형 + per-instance 데이터로 대역폭 절감</li>
+    <li><b>컬링</b> — 화면 밖 스프라이트를 CPU에서 걸러 드로우 대상 축소</li>
+  </ul>
+</section>
+
+<footer>
+  SpriteBatchDemo · Direct3D 11 · <a href="https://github.com/AIMHYUK/SpriteBatchDemo">GitHub</a> ·
+  자세한 서술은 저장소의 <code>README.md</code> / <code>Docs/</code> 참고
+</footer>
+
+</div>
+</body>
+</html>
