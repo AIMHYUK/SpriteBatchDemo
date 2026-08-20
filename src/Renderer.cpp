@@ -4,6 +4,7 @@
 #include <vector>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
+#include <dxgi1_5.h>   // IDXGIFactory5, DXGI_FEATURE_PRESENT_ALLOW_TEARING
 
 namespace
 {
@@ -292,6 +293,19 @@ bool Renderer::CreateDeviceAndSwapChain(HWND hwnd, UINT width, UINT height)
     if (!HR_CHECK(adapter->GetParent(IID_PPV_ARGS(factory.GetAddressOf())), L"IDXGIAdapter::GetParent"))
         return false;
 
+    // 이 GPU/드라이버가 tearing(프레임 상한 해제)을 지원하는지 물어본다.
+    // IDXGIFactory5부터 이 질의가 가능하다. 지원하면 스왑체인·Present에 플래그를 붙인다.
+    // 이게 없으면 창모드 플립 모델은 60Hz 같은 주사율에 묶여 성능 차이가 안 보인다.
+    if (ComPtr<IDXGIFactory5> factory5; SUCCEEDED(factory.As(&factory5)))
+    {
+        BOOL allowTearing = FALSE;
+        if (SUCCEEDED(factory5->CheckFeatureSupport(
+                DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing))))
+        {
+            m_allowTearing = (allowTearing == TRUE);
+        }
+    }
+
     DXGI_SWAP_CHAIN_DESC1 desc{};
     desc.Width       = width;
     desc.Height      = height;
@@ -302,6 +316,8 @@ bool Renderer::CreateDeviceAndSwapChain(HWND hwnd, UINT width, UINT height)
     desc.SampleDesc.Count   = 1;                           // FLIP 모델은 MSAA 불가
     desc.SampleDesc.Quality = 0;
     desc.AlphaMode   = DXGI_ALPHA_MODE_UNSPECIFIED;
+    // tearing을 쓰려면 스왑체인을 만들 때부터 이 플래그가 있어야 한다.
+    desc.Flags = m_allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u;
 
     if (!HR_CHECK(factory->CreateSwapChainForHwnd(
             m_device.Get(), hwnd, &desc, nullptr, nullptr, m_swapChain.GetAddressOf()),
@@ -356,7 +372,9 @@ void Renderer::Resize(UINT width, UINT height)
 
     ReleaseBackBufferView();
 
-    if (!HR_CHECK(m_swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0),
+    // 리사이즈 후에도 tearing을 유지하려면 만들 때와 같은 플래그를 넘겨야 한다.
+    const UINT swapFlags = m_allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u;
+    if (!HR_CHECK(m_swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, swapFlags),
                   L"IDXGISwapChain::ResizeBuffers"))
         return;
 
@@ -425,7 +443,9 @@ void Renderer::Render()
     }
 
     // 첫 인자 SyncInterval = 0 -> VSync OFF.
-    // 성능 비교가 목적이라 반드시 0이어야 한다. 1이면 프레임 시간이 모니터 주사율(예: 60Hz)에
-    // 고정돼 두 모드가 똑같이 16.6ms로 보이고, 드로우 콜 비용 차이가 통째로 묻힌다.
-    m_swapChain->Present(0, 0);
+    // 하지만 창모드 플립 모델은 이것만으로 안 풀린다. DWM(윈도우 합성기)이 주사율(예: 60Hz)로
+    // 다시 묶기 때문에, ALLOW_TEARING 플래그까지 줘야 진짜로 프레임 상한이 사라진다.
+    // 이게 없으면 두 모드가 똑같이 16.6ms(=60FPS)로 보이고 드로우 콜 비용 차이가 통째로 묻힌다.
+    const UINT presentFlags = m_allowTearing ? DXGI_PRESENT_ALLOW_TEARING : 0u;
+    m_swapChain->Present(0, presentFlags);
 }

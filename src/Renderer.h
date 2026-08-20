@@ -86,6 +86,11 @@ private:
     ComPtr<ID3D11Buffer>          m_constantBuffer;  // 화면 크기
     ComPtr<ID3D11RasterizerState> m_rasterizerState; // 컬링 규칙
 
+    // 플립 모델 스왑체인은 창모드에서 DWM이 주사율(예: 60Hz)로 프레임을 묶는다.
+    // Present(0,0)만으로는 안 풀리고, tearing(테어링)을 허용해야 진짜 상한이 사라진다.
+    // GPU/드라이버가 지원할 때만 켠다.
+    bool m_allowTearing = false;
+
     RenderMode m_mode        = RenderMode::Naive;   // 처음엔 느린 쪽으로 켠다(비교 대비를 위해)
     UINT       m_spriteCount = 0;
     UINT       m_indexCount  = 0;   // = m_spriteCount * 6
