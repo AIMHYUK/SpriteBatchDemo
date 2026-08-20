@@ -162,7 +162,7 @@ Naive(2만 번)와 Batched(1번)가 약 2,900배 차이**입니다. 게임 클�
 
 ## 8. 측정 결과 요약
 
-측정: 1280×720, VSync OFF(ALLOW_TEARING), 스프라이트 20,000개
+측정: AMD Radeon 780M(내장 그래픽), 1280×720, VSync OFF(ALLOW_TEARING), Release, 스프라이트 20,000개
 
 | 모드 | 드로우 콜 | CPU 제출 시간 | 총 프레임 시간 | FPS |
 |---|---|---|---|---|
