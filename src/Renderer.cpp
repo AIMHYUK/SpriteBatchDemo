@@ -260,25 +260,32 @@ bool Renderer::BuildSprites()
     m_spriteCount = kSpriteCount;
     m_indexCount  = kSpriteCount * 6;   // 사각형 하나 = 삼각형 2개 = 인덱스 6개
 
-    std::vector<Vertex>   vertices;
     std::vector<uint32_t> indices;
-    vertices.reserve(kSpriteCount * 4);
     indices.reserve(m_indexCount);
+
+    m_sprites.clear();
+    m_sprites.reserve(kSpriteCount);
+    m_cpuVertices.assign(kSpriteCount * 4, Vertex{});   // 매 프레임 현재 정점을 여기에 채운다
 
     Rng rng(12345u);   // 고정 시드 -> 매 실행 같은 장면
 
     for (UINT i = 0; i < kSpriteCount; ++i)
     {
-        const float w = rng.Range(kSpriteMin, kSpriteMax);
-        const float h = rng.Range(kSpriteMin, kSpriteMax);
+        SpriteState s{};
+        s.w = rng.Range(kSpriteMin, kSpriteMax);
+        s.h = rng.Range(kSpriteMin, kSpriteMax);
         // 스프라이트가 화면 안에 들어오도록 위치 범위를 크기만큼 줄인다.
-        const float x = rng.Range(0.0f, static_cast<float>(m_width)  - w);
-        const float y = rng.Range(0.0f, static_cast<float>(m_height) - h);
+        s.x = rng.Range(0.0f, static_cast<float>(m_width)  - s.w);
+        s.y = rng.Range(0.0f, static_cast<float>(m_height) - s.h);
+
+        // 속도: 각 축 50~180 px/초, 방향은 랜덤. 화면 경계에서 튕긴다.
+        s.vx = (rng.Unit() < 0.5f ? -1.0f : 1.0f) * rng.Range(50.0f, 180.0f);
+        s.vy = (rng.Unit() < 0.5f ? -1.0f : 1.0f) * rng.Range(50.0f, 180.0f);
 
         // 스프라이트 하나에 색 하나. 눈으로 개수가 느껴지도록 알록달록하게.
-        const float r = rng.Range(0.2f, 1.0f);
-        const float g = rng.Range(0.2f, 1.0f);
-        const float b = rng.Range(0.2f, 1.0f);
+        s.r = rng.Range(0.2f, 1.0f);
+        s.g = rng.Range(0.2f, 1.0f);
+        s.b = rng.Range(0.2f, 1.0f);
 
         // 아틀라스 4칸 중 하나를 골라 그 칸의 UV 범위를 구한다.
         // 절반 텍셀만큼 안으로 밀어(inset) 옆 칸 색이 새어드는 것을 막는다.
@@ -286,24 +293,15 @@ bool Renderer::BuildSprites()
         const uint32_t col = tileIdx % kAtlasCols;
         const uint32_t row = tileIdx / kAtlasCols;
         const float inset = 0.5f / kAtlasSize;
-        const float u0 = col / static_cast<float>(kAtlasCols) + inset;
-        const float v0 = row / static_cast<float>(kAtlasRows) + inset;
-        const float u1 = (col + 1) / static_cast<float>(kAtlasCols) - inset;
-        const float v1 = (row + 1) / static_cast<float>(kAtlasRows) - inset;
+        s.u0 = col / static_cast<float>(kAtlasCols) + inset;
+        s.v0 = row / static_cast<float>(kAtlasRows) + inset;
+        s.u1 = (col + 1) / static_cast<float>(kAtlasCols) - inset;
+        s.v1 = (row + 1) / static_cast<float>(kAtlasRows) - inset;
 
-        // 네 꼭짓점을 픽셀 좌표로 직접 굽는다. 시계 방향(0→1→2→3)이라 앞면으로 인정된다.
-        // UV도 위치와 같은 순서로 코너에 맞춰 넣는다(좌상 u0v0, 우상 u1v0, 우하 u1v1, 좌하 u0v1).
-        //
-        //   0 ────── 1
-        //   │        │      위쪽 삼각형: 0, 1, 2
-        //   │        │      아래쪽 삼각형: 0, 2, 3
-        //   3 ────── 2
+        m_sprites.push_back(s);
+
+        // 인덱스는 위치와 무관하게 고정이라 여기서 한 번만 만든다.
         const uint32_t base = i * 4;
-        vertices.push_back({ x,     y,     u0, v0, r, g, b, 1.0f });   // 0 좌상
-        vertices.push_back({ x + w, y,     u1, v0, r, g, b, 1.0f });   // 1 우상
-        vertices.push_back({ x + w, y + h, u1, v1, r, g, b, 1.0f });   // 2 우하
-        vertices.push_back({ x,     y + h, u0, v1, r, g, b, 1.0f });   // 3 좌하
-
         indices.push_back(base + 0);
         indices.push_back(base + 1);
         indices.push_back(base + 2);
@@ -312,15 +310,19 @@ bool Renderer::BuildSprites()
         indices.push_back(base + 3);
     }
 
-    // 위치가 고정이라 두 버퍼 모두 IMMUTABLE로 둘 수 있다. GPU가 가장 빠른 메모리에 올린다.
-    // (스프라이트를 매 프레임 움직이게 되면 DYNAMIC + Map으로 바꾼다. 그게 진짜 배칭의 다음 단계다.)
+    // 초기 위치로 정점을 한 번 채운다(이후 매 프레임 Update가 갱신).
+    RebuildVertices();
+
+    // 스프라이트가 매 프레임 움직이므로 정점 버퍼는 DYNAMIC. 매 프레임 Map으로 현재 정점을 올린다.
+    // (위치가 고정이던 이전 단계에선 IMMUTABLE로 한 번만 구웠다. 이게 정적 vs 동적 배칭의 차이다.)
     D3D11_BUFFER_DESC vbDesc{};
-    vbDesc.ByteWidth = static_cast<UINT>(vertices.size() * sizeof(Vertex));
-    vbDesc.Usage     = D3D11_USAGE_IMMUTABLE;
-    vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    vbDesc.ByteWidth      = static_cast<UINT>(m_cpuVertices.size() * sizeof(Vertex));
+    vbDesc.Usage          = D3D11_USAGE_DYNAMIC;
+    vbDesc.BindFlags      = D3D11_BIND_VERTEX_BUFFER;
+    vbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
     D3D11_SUBRESOURCE_DATA vbData{};
-    vbData.pSysMem = vertices.data();
+    vbData.pSysMem = m_cpuVertices.data();
 
     if (!HR_CHECK(m_device->CreateBuffer(&vbDesc, &vbData, m_vertexBuffer.GetAddressOf()),
                   L"CreateBuffer(VertexBuffer)"))
@@ -338,10 +340,8 @@ bool Renderer::BuildSprites()
                   L"CreateBuffer(IndexBuffer)"))
         return false;
 
-    // ── Naive 경로용 버퍼 ──
-    // 정점은 나중에 스프라이트마다 4개씩 복사해 쓰므로 CPU 쪽에 그대로 보관한다.
-    m_cpuVertices = std::move(vertices);
-
+    // ── Naive 경로용 작은 동적 버퍼 ──
+    // (m_cpuVertices는 위에서 RebuildVertices가 채웠다. Naive는 여기서 스프라이트마다 4개씩 복사해 쓴다.)
     // 스프라이트 하나(정점 4개)를 매번 새로 올릴 작은 동적 버퍼. 초기 데이터는 없다.
     D3D11_BUFFER_DESC nvbDesc{};
     nvbDesc.ByteWidth      = static_cast<UINT>(4 * sizeof(Vertex));
@@ -369,6 +369,48 @@ bool Renderer::BuildSprites()
         return false;
 
     return true;
+}
+
+void Renderer::RebuildVertices()
+{
+    // 스프라이트의 현재 상태로 정점 N*4개를 다시 만든다. 두 모드 모두 이 결과를 GPU에 올린다.
+    // 시계 방향(0→1→2→3), UV는 코너에 맞춘다(좌상 u0v0, 우상 u1v0, 우하 u1v1, 좌하 u0v1).
+    for (UINT i = 0; i < m_spriteCount; ++i)
+    {
+        const SpriteState& s = m_sprites[i];
+        const uint32_t base = i * 4;
+        m_cpuVertices[base + 0] = { s.x,       s.y,       s.u0, s.v0, s.r, s.g, s.b, 1.0f };
+        m_cpuVertices[base + 1] = { s.x + s.w, s.y,       s.u1, s.v0, s.r, s.g, s.b, 1.0f };
+        m_cpuVertices[base + 2] = { s.x + s.w, s.y + s.h, s.u1, s.v1, s.r, s.g, s.b, 1.0f };
+        m_cpuVertices[base + 3] = { s.x,       s.y + s.h, s.u0, s.v1, s.r, s.g, s.b, 1.0f };
+    }
+}
+
+void Renderer::Update(float dt)
+{
+    if (m_paused)
+        return;
+
+    // 큰 dt(첫 프레임·정지 해제 직후)에 스프라이트가 화면 밖으로 튀는 것을 막는다.
+    if (dt > 0.05f) dt = 0.05f;
+
+    const float maxX = static_cast<float>(m_width);
+    const float maxY = static_cast<float>(m_height);
+
+    // 물리 갱신: 이동 후 화면 경계에서 튕긴다(속도 반전 + 경계 안으로 되돌림).
+    // 이 계산은 두 모드가 똑같이 필요한 공통 준비라, CPU 제출 시간 측정 바깥에 둔다.
+    for (SpriteState& s : m_sprites)
+    {
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+
+        if      (s.x < 0.0f)         { s.x = 0.0f;        s.vx = -s.vx; }
+        else if (s.x > maxX - s.w)   { s.x = maxX - s.w;  s.vx = -s.vx; }
+        if      (s.y < 0.0f)         { s.y = 0.0f;        s.vy = -s.vy; }
+        else if (s.y > maxY - s.h)   { s.y = maxY - s.h;  s.vy = -s.vy; }
+    }
+
+    RebuildVertices();
 }
 
 bool Renderer::CreateAtlasResources()
@@ -645,7 +687,15 @@ void Renderer::Render()
     }
     else // Batched
     {
-        // 모든 스프라이트의 정점이 이미 한 버퍼에 구워져 있다. 업로드 없이 한 번에 그린다.
+        // 모든 스프라이트의 현재 정점을 '한 번의' Map으로 통째로 올리고 '한 번' 그린다.
+        // Naive가 스프라이트마다 나눠 하던 업로드+드로우를, 각각 1회로 합친 것이 배칭이다.
+        D3D11_MAPPED_SUBRESOURCE mappedVB{};
+        if (SUCCEEDED(m_context->Map(m_vertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedVB)))
+        {
+            memcpy(mappedVB.pData, m_cpuVertices.data(), m_cpuVertices.size() * sizeof(Vertex));
+            m_context->Unmap(m_vertexBuffer.Get(), 0);
+        }
+
         m_context->IASetVertexBuffers(0, 1, m_vertexBuffer.GetAddressOf(), &stride, &offset);
         m_context->IASetIndexBuffer(m_indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 

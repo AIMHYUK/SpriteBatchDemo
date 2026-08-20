@@ -24,10 +24,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
         renderer.Resize(width, height);
     });
 
-    // Space 를 누르면 Naive <-> Batched 전환. 그 외 키는 무시한다.
+    // Space = Naive <-> Batched 전환, P = 움직임 일시정지. 그 외 키는 무시.
     window.SetKeyDownCallback([&renderer](WPARAM key) {
         if (key == VK_SPACE)
             renderer.ToggleMode();
+        else if (key == 'P')
+            renderer.TogglePause();
     });
 
     window.Show(nCmdShow);
@@ -37,7 +39,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     // 게임 루프. 메시지를 모두 처리한 뒤 한 프레임을 그린다.
     while (window.PumpMessages())
     {
-        timer.Tick();
+        const float dt = static_cast<float>(timer.Tick());
+        renderer.Update(dt);   // 스프라이트 이동 + 현재 정점 재생성 (측정 바깥의 공통 준비)
         renderer.Render();
 
         // 1초마다 평균값을 모아 제목에 띄운다. 여기가 곧 계측 결과 화면이다.
@@ -45,10 +48,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
         if (timer.TryGetStats(fps, ms))
         {
             const wchar_t* mode = (renderer.Mode() == RenderMode::Batched) ? L"Batched" : L"Naive";
+            const wchar_t* pause = renderer.IsPaused() ? L" [정지]" : L"";
             wchar_t title[256]{};
             swprintf_s(title,
-                       L"SpriteBatchDemo  |  %s  |  스프라이트 %u개  |  드로우콜 %u  |  CPU제출 %.3f ms  |  프레임 %.3f ms  |  %.0f FPS   [Space] 전환  [Esc] 종료",
-                       mode, renderer.SpriteCount(), renderer.DrawCallCount(), renderer.SubmitMs(), ms, fps);
+                       L"SpriteBatchDemo  |  %s%s  |  스프라이트 %u개  |  드로우콜 %u  |  CPU제출 %.3f ms  |  프레임 %.3f ms  |  %.0f FPS   [Space]전환 [P]정지 [Esc]종료",
+                       mode, pause, renderer.SpriteCount(), renderer.DrawCallCount(), renderer.SubmitMs(), ms, fps);
             SetWindowTextW(window.Handle(), title);
         }
     }

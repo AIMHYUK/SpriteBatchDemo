@@ -23,6 +23,18 @@ struct Vertex
     float r, g, b, a;    // 색. 각 0 ~ 1. 아틀라스 샘플에 곱해 색을 입힌다
 };
 
+// 스프라이트 하나의 '상태'. 이제 위치가 매 프레임 바뀌므로(움직임) 정점에 굽는 대신
+// 이 상태를 CPU에 들고 있다가, 매 프레임 현재 위치로 정점을 다시 만든다.
+// 이것이 정적 배칭(한 번 굽고 끝)과 동적 배칭(매 프레임 다시 올림)의 갈림길이다.
+struct SpriteState
+{
+    float x, y;              // 현재 위치(좌상단, 픽셀)
+    float vx, vy;            // 속도(픽셀/초)
+    float w, h;              // 크기
+    float u0, v0, u1, v1;    // 아틀라스 UV 사각형(어느 도형인지)
+    float r, g, b;           // 색
+};
+
 // 매 프레임 정점 셰이더로 넘기는 값. shaders/Sprite.vs.hlsl의 cbuffer와 짝이다.
 // 여기서는 화면 크기 하나만 있으면 픽셀 -> NDC 변환이 된다.
 //
@@ -53,10 +65,17 @@ public:
     // 창 크기가 바뀌었을 때 스왑체인 버퍼를 다시 잡는다.
     void Resize(UINT width, UINT height);
 
+    // 스프라이트를 dt(초)만큼 움직이고, 현재 위치로 정점을 다시 만든다. 매 프레임 Render 전에 부른다.
+    void Update(float dt);
+
     void Render();
 
     // Naive <-> Batched 전환. main이 Space 키에 연결한다.
     void ToggleMode() { m_mode = (m_mode == RenderMode::Naive) ? RenderMode::Batched : RenderMode::Naive; }
+
+    // 움직임 일시정지(숫자를 읽거나 스크린샷 찍을 때). main이 P 키에 연결한다.
+    void TogglePause() { m_paused = !m_paused; }
+    bool IsPaused() const { return m_paused; }
 
     RenderMode Mode()          const { return m_mode; }
     UINT       DrawCallCount() const { return m_drawCalls; }     // 직전 프레임에 부른 드로우 콜 수
@@ -77,9 +96,12 @@ private:
     // 여러 도형을 한 장에 담아 두면 텍스처 바인딩을 스프라이트마다 바꿀 필요가 없다.
     bool CreateAtlasResources();
 
-    // 스프라이트 N개의 꼭짓점·인덱스를 CPU에서 만들어 IMMUTABLE 버퍼로 올린다.
-    // 위치는 고정 시드 난수라 실행할 때마다 같은 장면이 나온다(비교 재현성).
+    // 스프라이트 N개의 초기 상태(위치·속도·크기·색·UV)를 만들고 버퍼를 준비한다.
+    // 위치·속도는 고정 시드 난수라 실행할 때마다 같은 장면이 나온다(비교 재현성).
     bool BuildSprites();
+
+    // m_sprites의 현재 상태로 m_cpuVertices(정점 N*4개)를 다시 채운다.
+    void RebuildVertices();
 
     ComPtr<ID3D11Device>           m_device;
     ComPtr<ID3D11DeviceContext>    m_context;
@@ -90,8 +112,8 @@ private:
     ComPtr<ID3D11VertexShader>    m_vertexShader;
     ComPtr<ID3D11PixelShader>     m_pixelShader;
     ComPtr<ID3D11InputLayout>     m_inputLayout;     // 정점 버퍼의 바이트를 해석하는 규칙
-    ComPtr<ID3D11Buffer>          m_vertexBuffer;    // [Batched] 스프라이트 N개의 꼭짓점 (N*4개)
-    ComPtr<ID3D11Buffer>          m_indexBuffer;     // [Batched] N*6개 인덱스
+    ComPtr<ID3D11Buffer>          m_vertexBuffer;    // [Batched] 정점 N*4개. 움직이므로 DYNAMIC(매 프레임 Map)
+    ComPtr<ID3D11Buffer>          m_indexBuffer;     // [Batched] N*6개 인덱스 (안 바뀌므로 IMMUTABLE)
     ComPtr<ID3D11Buffer>          m_constantBuffer;  // 화면 크기
 
     // [Naive] 스프라이트 하나씩 GPU에 올려 그리는 경로.
@@ -99,7 +121,9 @@ private:
     // 바로 이 "per-object 업로드 + 드로우"가 배칭이 없애는 비용이다.
     ComPtr<ID3D11Buffer>          m_naiveVertexBuffer;  // DYNAMIC, 정점 4개
     ComPtr<ID3D11Buffer>          m_naiveIndexBuffer;   // 로컬 인덱스 6개 {0,1,2,0,2,3}
-    std::vector<Vertex>           m_cpuVertices;        // 구워둔 전체 정점 (Naive가 4개씩 복사)
+    std::vector<SpriteState>      m_sprites;            // 스프라이트 상태(위치·속도 등). 매 프레임 갱신
+    std::vector<Vertex>           m_cpuVertices;        // 현재 상태로 만든 정점 N*4개 (양쪽 모드가 여기서 업로드)
+    bool                          m_paused = false;     // 움직임 일시정지
     ComPtr<ID3D11RasterizerState> m_rasterizerState; // 컬링 규칙
 
     // ── 텍스처 아틀라스 ──
