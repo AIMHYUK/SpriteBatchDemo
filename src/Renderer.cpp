@@ -14,17 +14,16 @@ namespace
     // 화면을 지울 색. 아무것도 안 그려도 이 색이 보이면 파이프라인이 살아 있다는 뜻이다.
     constexpr float kClearColor[4] = { 0.08f, 0.08f, 0.10f, 1.0f };
 
-    // 그릴 스프라이트 수. Naive 모드에서 이 수가 곧 드로우 콜 수가 된다.
-    // 값을 키우면 Naive가 급격히 느려지고(드로우 콜 제출에 CPU가 묶임) Batched는 거의
-    // 그대로다 -> 격차가 커진다. 요즘 GPU는 수천 개론 티가 안 나서 10만 개로 잡았다.
-    // (측정 실험: 500 / 2000 / 10000 / 50000 / 100000 으로 바꿔가며 갈라지는 지점을 본다)
-    constexpr UINT kSpriteCount = 100000;
+    // 그릴 스프라이트 수. Naive 모드에서 이 수만큼 "정점 업로드 + 드로우"를 반복한다.
+    // 그 per-object 비용이 배칭과의 격차를 만든다.
+    // (측정 실험: 2000 / 5000 / 10000 / 20000 / 40000 으로 바꿔가며 갈라지는 지점을 본다.
+    //  너무 크게 잡으면 Naive가 수십 ms로 느려져 데모가 버벅인다. 2만 정도가 균형점)
+    constexpr UINT kSpriteCount = 20000;
 
-    // 스프라이트를 아주 작게 둔다(겹침=오버드로우를 줄이려고).
-    // 크게 그리면 픽셀 셰이더가 병목이 되어 "드로우 콜 비용"이 묻힌다.
-    // 수가 10만이라 더 작게(3~8px) 잡아 화면이 픽셀로 포화되지 않게 한다.
-    constexpr float kSpriteMin = 3.0f;
-    constexpr float kSpriteMax = 8.0f;
+    // 스프라이트를 작게 둔다(겹침=오버드로우를 줄이려고).
+    // 크게 그리면 픽셀 셰이더가 병목이 되어 우리가 재려는 per-object 비용이 묻힌다.
+    constexpr float kSpriteMin = 6.0f;
+    constexpr float kSpriteMax = 16.0f;
 
     // 실행할 때마다 같은 장면을 만들기 위한 고정 시드 난수(xorshift32).
     // std::rand는 구현마다 결과가 다르고 시드도 전역이라, 재현 가능한 비교를 위해 직접 둔다.
@@ -243,6 +242,36 @@ bool Renderer::BuildSprites()
                   L"CreateBuffer(IndexBuffer)"))
         return false;
 
+    // ── Naive 경로용 버퍼 ──
+    // 정점은 나중에 스프라이트마다 4개씩 복사해 쓰므로 CPU 쪽에 그대로 보관한다.
+    m_cpuVertices = std::move(vertices);
+
+    // 스프라이트 하나(정점 4개)를 매번 새로 올릴 작은 동적 버퍼. 초기 데이터는 없다.
+    D3D11_BUFFER_DESC nvbDesc{};
+    nvbDesc.ByteWidth      = static_cast<UINT>(4 * sizeof(Vertex));
+    nvbDesc.Usage          = D3D11_USAGE_DYNAMIC;
+    nvbDesc.BindFlags      = D3D11_BIND_VERTEX_BUFFER;
+    nvbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+    if (!HR_CHECK(m_device->CreateBuffer(&nvbDesc, nullptr, m_naiveVertexBuffer.GetAddressOf()),
+                  L"CreateBuffer(NaiveVertexBuffer)"))
+        return false;
+
+    // 정점 4개짜리 사각형의 로컬 인덱스. Batched의 큰 인덱스 버퍼와 달리 오프셋이 0부터다.
+    const uint32_t localIndices[] = { 0, 1, 2, 0, 2, 3 };
+
+    D3D11_BUFFER_DESC nibDesc{};
+    nibDesc.ByteWidth = sizeof(localIndices);
+    nibDesc.Usage     = D3D11_USAGE_IMMUTABLE;
+    nibDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+
+    D3D11_SUBRESOURCE_DATA nibData{};
+    nibData.pSysMem = localIndices;
+
+    if (!HR_CHECK(m_device->CreateBuffer(&nibDesc, &nibData, m_naiveIndexBuffer.GetAddressOf()),
+                  L"CreateBuffer(NaiveIndexBuffer)"))
+        return false;
+
     return true;
 }
 
@@ -395,14 +424,8 @@ void Renderer::Render()
     m_context->OMSetRenderTargets(1, views, nullptr);
     m_context->ClearRenderTargetView(m_backBufferView.Get(), kClearColor);
 
-    // ── 파이프라인에 필요한 것 꽂기 (드로우 방식과 무관하게 공통) ──
-    UINT stride = sizeof(Vertex);
-    UINT offset = 0;
-
+    // ── 파이프라인 공통 설정 (정점/인덱스 버퍼는 모드마다 다르므로 아래에서 꽂는다) ──
     m_context->IASetInputLayout(m_inputLayout.Get());
-    m_context->IASetVertexBuffers(0, 1, m_vertexBuffer.GetAddressOf(), &stride, &offset);
-    // 인덱스가 uint32라 R32_UINT. (단일 스프라이트 예제는 uint16이라 R16이었다)
-    m_context->IASetIndexBuffer(m_indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     m_context->RSSetState(m_rasterizerState.Get());
 
@@ -424,21 +447,37 @@ void Renderer::Render()
 
     // ── 여기가 이 프로젝트의 핵심 ──
     //
-    // 두 모드는 완전히 같은 정점·인덱스 버퍼에서 똑같은 픽셀을 그린다.
-    // 다른 것은 오직 DrawIndexed를 몇 번 부르느냐뿐이다.
-    // 그래서 프레임 시간의 차이는 순수하게 "드로우 콜 개수"의 비용이라고 말할 수 있다.
+    // 두 모드는 똑같은 스프라이트 무리를 똑같은 픽셀로 그린다. 다른 것은 그 방법이다.
+    UINT stride = sizeof(Vertex);
+    UINT offset = 0;
+
     if (m_mode == RenderMode::Naive)
     {
-        // 스프라이트마다 한 번씩. 인덱스 6개를 i*6 위치부터 읽는다.
-        // 드로우 콜 하나하나가 CPU->드라이버 왕복 비용을 낸다. 이게 쌓여 느려진다.
+        // 스프라이트 하나씩: 정점 4개를 작은 동적 버퍼에 Map으로 올리고 -> 그린다. N번 반복.
+        // 이게 실무의 순진한 경로다. Map(WRITE_DISCARD)마다 드라이버가 버퍼를 새로 잡고,
+        // 드로우 콜마다 CPU->드라이버 왕복이 붙는다. 이 per-object 비용이 쌓여 느려진다.
+        m_context->IASetVertexBuffers(0, 1, m_naiveVertexBuffer.GetAddressOf(), &stride, &offset);
+        m_context->IASetIndexBuffer(m_naiveIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+
         for (UINT i = 0; i < m_spriteCount; ++i)
-            m_context->DrawIndexed(6, i * 6, 0);
+        {
+            D3D11_MAPPED_SUBRESOURCE mappedVB{};
+            if (SUCCEEDED(m_context->Map(m_naiveVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedVB)))
+            {
+                memcpy(mappedVB.pData, &m_cpuVertices[i * 4], 4 * sizeof(Vertex));
+                m_context->Unmap(m_naiveVertexBuffer.Get(), 0);
+            }
+            m_context->DrawIndexed(6, 0, 0);
+        }
 
         m_drawCalls = m_spriteCount;
     }
     else // Batched
     {
-        // 전부 한 방에. 인덱스 N*6개를 0번부터 통째로.
+        // 모든 스프라이트의 정점이 이미 한 버퍼에 구워져 있다. 업로드 없이 한 번에 그린다.
+        m_context->IASetVertexBuffers(0, 1, m_vertexBuffer.GetAddressOf(), &stride, &offset);
+        m_context->IASetIndexBuffer(m_indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+
         m_context->DrawIndexed(m_indexCount, 0, 0);
 
         m_drawCalls = 1;

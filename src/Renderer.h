@@ -6,6 +6,7 @@
 #include <dxgi1_2.h>
 
 #include <cstdint>
+#include <vector>
 
 // 정점 하나가 담는 것. C++ 쪽 정의다.
 //
@@ -81,9 +82,16 @@ private:
     ComPtr<ID3D11VertexShader>    m_vertexShader;
     ComPtr<ID3D11PixelShader>     m_pixelShader;
     ComPtr<ID3D11InputLayout>     m_inputLayout;     // 정점 버퍼의 바이트를 해석하는 규칙
-    ComPtr<ID3D11Buffer>          m_vertexBuffer;    // 스프라이트 N개의 꼭짓점 (N*4개)
-    ComPtr<ID3D11Buffer>          m_indexBuffer;     // N*6개 인덱스 (사각형 하나당 6)
+    ComPtr<ID3D11Buffer>          m_vertexBuffer;    // [Batched] 스프라이트 N개의 꼭짓점 (N*4개)
+    ComPtr<ID3D11Buffer>          m_indexBuffer;     // [Batched] N*6개 인덱스
     ComPtr<ID3D11Buffer>          m_constantBuffer;  // 화면 크기
+
+    // [Naive] 스프라이트 하나씩 GPU에 올려 그리는 경로.
+    // 매 스프라이트마다 이 작은 동적 버퍼에 정점 4개를 Map으로 올리고 그린다.
+    // 바로 이 "per-object 업로드 + 드로우"가 배칭이 없애는 비용이다.
+    ComPtr<ID3D11Buffer>          m_naiveVertexBuffer;  // DYNAMIC, 정점 4개
+    ComPtr<ID3D11Buffer>          m_naiveIndexBuffer;   // 로컬 인덱스 6개 {0,1,2,0,2,3}
+    std::vector<Vertex>           m_cpuVertices;        // 구워둔 전체 정점 (Naive가 4개씩 복사)
     ComPtr<ID3D11RasterizerState> m_rasterizerState; // 컬링 규칙
 
     // 플립 모델 스왑체인은 창모드에서 DWM이 주사율(예: 60Hz)로 프레임을 묶는다.
