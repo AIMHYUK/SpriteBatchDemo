@@ -1,6 +1,7 @@
 #include "Renderer.h"
 
 #include <cstdint>
+#include <cmath>
 #include <vector>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
@@ -34,7 +35,82 @@ namespace
         uint32_t Next() { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return s; }
         float Unit() { return (Next() >> 8) * (1.0f / 16777216.0f); }     // [0, 1)
         float Range(float lo, float hi) { return lo + Unit() * (hi - lo); }
+        uint32_t Below(uint32_t n) { return Next() % n; }                 // [0, n)
     };
+
+    // ── 텍스처 아틀라스 설정 ──
+    // 한 장(256x256)에 도형 4종을 2x2로 담는다. 스프라이트는 이 중 하나를 UV로 뽑아 쓴다.
+    // 여러 종류를 한 장에 모아두면 텍스처를 스프라이트마다 바꿀 필요가 없어, 배칭 한 번에 다 그린다.
+    constexpr UINT kAtlasSize      = 256;
+    constexpr UINT kAtlasCols      = 2;
+    constexpr UINT kAtlasRows      = 2;
+    constexpr UINT kAtlasTileCount = kAtlasCols * kAtlasRows;
+
+    // 0 이하면 0, 1 이상이면 1, 사이는 직선. 가장자리를 부드럽게 하는 데 쓴다(간이 smoothstep).
+    float LinStep(float edge0, float edge1, float x)
+    {
+        if (x <= edge0) return 0.0f;
+        if (x >= edge1) return 1.0f;
+        return (x - edge0) / (edge1 - edge0);
+    }
+
+    // 아틀라스를 코드로 그린다(외부 이미지·라이브러리 없음).
+    // 흰색(RGB=255)에 알파로 도형 모양을 새긴다. 정점 색을 곱하면 그 도형이 그 색으로 물든다.
+    // 반환은 R8G8B8A8_UNORM 픽셀(uint32, 메모리순 R,G,B,A -> 리틀엔디언 0xAABBGGRR).
+    std::vector<uint32_t> GenerateAtlasPixels()
+    {
+        std::vector<uint32_t> pixels(kAtlasSize * kAtlasSize, 0u);
+        const UINT tile = kAtlasSize / kAtlasCols;   // 128
+
+        for (UINT ty = 0; ty < kAtlasRows; ++ty)
+        for (UINT tx = 0; tx < kAtlasCols; ++tx)
+        {
+            const UINT shape = ty * kAtlasCols + tx;   // 0~3
+            const UINT ox = tx * tile;
+            const UINT oy = ty * tile;
+
+            for (UINT py = 0; py < tile; ++py)
+            for (UINT px = 0; px < tile; ++px)
+            {
+                // 타일 중심 기준 정규화 좌표 (-1 ~ 1)
+                const float nx = (px + 0.5f) / (tile * 0.5f) - 1.0f;
+                const float ny = (py + 0.5f) / (tile * 0.5f) - 1.0f;
+                const float r  = std::sqrt(nx * nx + ny * ny);
+
+                float alpha = 0.0f;
+                switch (shape)
+                {
+                case 0:  // 채운 원
+                    alpha = 1.0f - LinStep(0.78f, 0.95f, r);
+                    break;
+                case 1:  // 링(속 빈 원)
+                    alpha = LinStep(0.45f, 0.60f, r) * (1.0f - LinStep(0.80f, 0.95f, r));
+                    break;
+                case 2:  // 다이아몬드
+                {
+                    const float d = std::fabs(nx) + std::fabs(ny);
+                    alpha = 1.0f - LinStep(0.82f, 0.98f, d);
+                    break;
+                }
+                default: // + 모양(네잎 별)
+                {
+                    const float barH = 1.0f - LinStep(0.20f, 0.30f, std::fabs(ny));
+                    const float barV = 1.0f - LinStep(0.20f, 0.30f, std::fabs(nx));
+                    const float cross = (barH > barV) ? barH : barV;
+                    alpha = cross * (1.0f - LinStep(0.90f, 1.00f, r));  // 끝을 둥글게
+                    break;
+                }
+                }
+
+                if (alpha < 0.0f) alpha = 0.0f;
+                if (alpha > 1.0f) alpha = 1.0f;
+                const uint32_t a = static_cast<uint32_t>(alpha * 255.0f + 0.5f);
+
+                pixels[(oy + py) * kAtlasSize + (ox + px)] = (a << 24) | 0x00FFFFFFu;
+            }
+        }
+        return pixels;
+    }
 
     // HLSL 파일 하나를 컴파일해서 결과 바이트코드를 blob에 담아 준다.
     //
@@ -132,13 +208,14 @@ bool Renderer::CreateSpriteResources()
     //
     // 정점 버퍼는 GPU에겐 그냥 바이트 뭉치다. 어디가 위치고 어디가 색인지 알려주는 규칙이다.
     //
-    //   바이트  0   4      8   12  16  20
-    //          [x] [y]    [r] [g] [b] [a]
-    //          └POSITION┘ └───── COLOR ─────┘
-    //           (8바이트)        (16바이트)
+    //   바이트  0   4      8   12     16  20  24  28
+    //          [x] [y]    [u] [v]    [r] [g] [b] [a]
+    //          └POSITION┘ └TEXCOORD┘ └───── COLOR ─────┘
+    //           (8바이트)  (8바이트)       (16바이트)
     const D3D11_INPUT_ELEMENT_DESC layout[] = {
-        { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,       0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0,  8, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
 
     // 만들 때 정점 셰이더 바이트코드를 같이 넘겨, 레이아웃이 셰이더 입력과 맞는지 검증받는다.
@@ -170,7 +247,11 @@ bool Renderer::CreateSpriteResources()
                   L"CreateRasterizerState"))
         return false;
 
-    // ── 6. 스프라이트 무리를 만들어 정점/인덱스 버퍼로 올린다 ──
+    // ── 6. 텍스처 아틀라스 + 샘플러 + 블렌드 상태 ──
+    if (!CreateAtlasResources())
+        return false;
+
+    // ── 7. 스프라이트 무리를 만들어 정점/인덱스 버퍼로 올린다 ──
     return BuildSprites();
 }
 
@@ -199,17 +280,29 @@ bool Renderer::BuildSprites()
         const float g = rng.Range(0.2f, 1.0f);
         const float b = rng.Range(0.2f, 1.0f);
 
+        // 아틀라스 4칸 중 하나를 골라 그 칸의 UV 범위를 구한다.
+        // 절반 텍셀만큼 안으로 밀어(inset) 옆 칸 색이 새어드는 것을 막는다.
+        const uint32_t tileIdx = rng.Below(kAtlasTileCount);
+        const uint32_t col = tileIdx % kAtlasCols;
+        const uint32_t row = tileIdx / kAtlasCols;
+        const float inset = 0.5f / kAtlasSize;
+        const float u0 = col / static_cast<float>(kAtlasCols) + inset;
+        const float v0 = row / static_cast<float>(kAtlasRows) + inset;
+        const float u1 = (col + 1) / static_cast<float>(kAtlasCols) - inset;
+        const float v1 = (row + 1) / static_cast<float>(kAtlasRows) - inset;
+
         // 네 꼭짓점을 픽셀 좌표로 직접 굽는다. 시계 방향(0→1→2→3)이라 앞면으로 인정된다.
+        // UV도 위치와 같은 순서로 코너에 맞춰 넣는다(좌상 u0v0, 우상 u1v0, 우하 u1v1, 좌하 u0v1).
         //
         //   0 ────── 1
         //   │        │      위쪽 삼각형: 0, 1, 2
         //   │        │      아래쪽 삼각형: 0, 2, 3
         //   3 ────── 2
         const uint32_t base = i * 4;
-        vertices.push_back({ x,     y,     r, g, b, 1.0f });   // 0 좌상
-        vertices.push_back({ x + w, y,     r, g, b, 1.0f });   // 1 우상
-        vertices.push_back({ x + w, y + h, r, g, b, 1.0f });   // 2 우하
-        vertices.push_back({ x,     y + h, r, g, b, 1.0f });   // 3 좌하
+        vertices.push_back({ x,     y,     u0, v0, r, g, b, 1.0f });   // 0 좌상
+        vertices.push_back({ x + w, y,     u1, v0, r, g, b, 1.0f });   // 1 우상
+        vertices.push_back({ x + w, y + h, u1, v1, r, g, b, 1.0f });   // 2 우하
+        vertices.push_back({ x,     y + h, u0, v1, r, g, b, 1.0f });   // 3 좌하
 
         indices.push_back(base + 0);
         indices.push_back(base + 1);
@@ -273,6 +366,67 @@ bool Renderer::BuildSprites()
 
     if (!HR_CHECK(m_device->CreateBuffer(&nibDesc, &nibData, m_naiveIndexBuffer.GetAddressOf()),
                   L"CreateBuffer(NaiveIndexBuffer)"))
+        return false;
+
+    return true;
+}
+
+bool Renderer::CreateAtlasResources()
+{
+    // ── 1. 아틀라스 픽셀을 코드로 그려 IMMUTABLE 텍스처로 올린다 ──
+    const std::vector<uint32_t> pixels = GenerateAtlasPixels();
+
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width            = kAtlasSize;
+    td.Height           = kAtlasSize;
+    td.MipLevels        = 1;
+    td.ArraySize        = 1;
+    td.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage            = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA srd{};
+    srd.pSysMem     = pixels.data();
+    srd.SysMemPitch = kAtlasSize * sizeof(uint32_t);   // 한 줄(가로 한 줄)의 바이트 수
+
+    ComPtr<ID3D11Texture2D> atlas;
+    if (!HR_CHECK(m_device->CreateTexture2D(&td, &srd, atlas.GetAddressOf()),
+                  L"CreateTexture2D(Atlas)"))
+        return false;
+
+    // 텍스처 자체가 아니라 "셰이더가 읽는 뷰(SRV)"를 파이프라인에 바인딩한다.
+    if (!HR_CHECK(m_device->CreateShaderResourceView(atlas.Get(), nullptr, m_atlasSRV.GetAddressOf()),
+                  L"CreateShaderResourceView(Atlas)"))
+        return false;
+
+    // ── 2. 샘플러: UV로 텍스처를 어떻게 읽을지. 선형 필터 + 가장자리 클램프 ──
+    D3D11_SAMPLER_DESC sd{};
+    sd.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.AddressU       = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressV       = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressW       = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sd.MaxLOD         = D3D11_FLOAT32_MAX;
+
+    if (!HR_CHECK(m_device->CreateSamplerState(&sd, m_sampler.GetAddressOf()),
+                  L"CreateSamplerState"))
+        return false;
+
+    // ── 3. 알파 블렌드 상태: 도형 가장자리(알파<1)를 배경과 부드럽게 섞는다 ──
+    //    최종색 = src.rgb * src.a + dst.rgb * (1 - src.a)
+    D3D11_BLEND_DESC bd{};
+    bd.RenderTarget[0].BlendEnable           = TRUE;
+    bd.RenderTarget[0].SrcBlend              = D3D11_BLEND_SRC_ALPHA;
+    bd.RenderTarget[0].DestBlend             = D3D11_BLEND_INV_SRC_ALPHA;
+    bd.RenderTarget[0].BlendOp               = D3D11_BLEND_OP_ADD;
+    bd.RenderTarget[0].SrcBlendAlpha         = D3D11_BLEND_ONE;
+    bd.RenderTarget[0].DestBlendAlpha        = D3D11_BLEND_ZERO;
+    bd.RenderTarget[0].BlendOpAlpha          = D3D11_BLEND_OP_ADD;
+    bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+    if (!HR_CHECK(m_device->CreateBlendState(&bd, m_blendState.GetAddressOf()),
+                  L"CreateBlendState"))
         return false;
 
     return true;
@@ -434,6 +588,15 @@ void Renderer::Render()
 
     m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
     m_context->PSSetShader(m_pixelShader.Get(), nullptr, 0);
+
+    // 아틀라스 텍스처·샘플러를 픽셀 셰이더에 꽂는다(t0/s0).
+    // 도형 4종이 한 장에 있으므로 스프라이트마다 텍스처를 바꿀 필요가 없다 -> 배칭 한 번에 다 그린다.
+    m_context->PSSetShaderResources(0, 1, m_atlasSRV.GetAddressOf());
+    m_context->PSSetSamplers(0, 1, m_sampler.GetAddressOf());
+
+    // 알파 블렌딩 켜기(도형 가장자리를 배경과 부드럽게). 두 모드 공통.
+    const float blendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    m_context->OMSetBlendState(m_blendState.Get(), blendFactor, 0xFFFFFFFF);
 
     // 화면 크기를 상수 버퍼로. 정점 셰이더가 픽셀 -> NDC 변환에 쓴다.
     FrameConstants constants{};

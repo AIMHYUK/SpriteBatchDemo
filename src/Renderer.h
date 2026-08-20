@@ -19,7 +19,8 @@
 struct Vertex
 {
     float x, y;          // 화면 픽셀 좌표 (좌상단 원점, y 아래로 +)
-    float r, g, b, a;    // 색. 각 0 ~ 1
+    float u, v;          // 아틀라스 UV (0~1). 어느 도형을 뽑을지 정한다
+    float r, g, b, a;    // 색. 각 0 ~ 1. 아틀라스 샘플에 곱해 색을 입힌다
 };
 
 // 매 프레임 정점 셰이더로 넘기는 값. shaders/Sprite.vs.hlsl의 cbuffer와 짝이다.
@@ -72,6 +73,10 @@ private:
     // 셰이더 -> 입력 레이아웃 -> 정점/인덱스 버퍼 -> 상수 버퍼 -> 래스터라이저 상태.
     bool CreateSpriteResources();
 
+    // 텍스처 아틀라스(코드로 생성) + SRV + 샘플러 + 알파 블렌드 상태를 만든다.
+    // 여러 도형을 한 장에 담아 두면 텍스처 바인딩을 스프라이트마다 바꿀 필요가 없다.
+    bool CreateAtlasResources();
+
     // 스프라이트 N개의 꼭짓점·인덱스를 CPU에서 만들어 IMMUTABLE 버퍼로 올린다.
     // 위치는 고정 시드 난수라 실행할 때마다 같은 장면이 나온다(비교 재현성).
     bool BuildSprites();
@@ -96,6 +101,11 @@ private:
     ComPtr<ID3D11Buffer>          m_naiveIndexBuffer;   // 로컬 인덱스 6개 {0,1,2,0,2,3}
     std::vector<Vertex>           m_cpuVertices;        // 구워둔 전체 정점 (Naive가 4개씩 복사)
     ComPtr<ID3D11RasterizerState> m_rasterizerState; // 컬링 규칙
+
+    // ── 텍스처 아틀라스 ──
+    ComPtr<ID3D11ShaderResourceView> m_atlasSRV;      // 픽셀 셰이더가 샘플할 아틀라스
+    ComPtr<ID3D11SamplerState>       m_sampler;       // UV -> 색을 어떻게 읽을지(선형/클램프)
+    ComPtr<ID3D11BlendState>         m_blendState;    // 알파 블렌딩(도형 가장자리를 부드럽게)
 
     // 플립 모델 스왑체인은 창모드에서 DWM이 주사율(예: 60Hz)로 프레임을 묶는다.
     // Present(0,0)만으로는 안 풀리고, tearing(테어링)을 허용해야 진짜 상한이 사라진다.
