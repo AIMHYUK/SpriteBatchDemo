@@ -92,6 +92,9 @@ bool Renderer::Initialize(HWND hwnd, UINT width, UINT height)
     m_width  = width;
     m_height = height;
 
+    // CPU 제출 시간 측정용 주파수는 부팅 후 안 바뀌므로 한 번만 받아 둔다.
+    QueryPerformanceFrequency(&m_qpcFreq);
+
     if (!CreateDeviceAndSwapChain(hwnd, width, height))
         return false;
 
@@ -448,6 +451,11 @@ void Renderer::Render()
     // ── 여기가 이 프로젝트의 핵심 ──
     //
     // 두 모드는 똑같은 스프라이트 무리를 똑같은 픽셀로 그린다. 다른 것은 그 방법이다.
+    // 아래 드로우 "제출"에 든 CPU 시간을 잰다. 총 프레임 시간은 GPU 바닥에 묶이지만,
+    // 이 CPU 제출 시간이야말로 배칭이 렌더 스레드에서 실제로 절약하는 양이다.
+    LARGE_INTEGER submitStart{};
+    QueryPerformanceCounter(&submitStart);
+
     UINT stride = sizeof(Vertex);
     UINT offset = 0;
 
@@ -482,6 +490,11 @@ void Renderer::Render()
 
         m_drawCalls = 1;
     }
+
+    LARGE_INTEGER submitEnd{};
+    QueryPerformanceCounter(&submitEnd);
+    m_lastSubmitMs = double(submitEnd.QuadPart - submitStart.QuadPart) * 1000.0
+                   / double(m_qpcFreq.QuadPart);
 
     // 첫 인자 SyncInterval = 0 -> VSync OFF.
     // 하지만 창모드 플립 모델은 이것만으로 안 풀린다. DWM(윈도우 합성기)이 주사율(예: 60Hz)로

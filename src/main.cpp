@@ -45,10 +45,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
         if (timer.TryGetStats(fps, ms))
         {
             const wchar_t* mode = (renderer.Mode() == RenderMode::Batched) ? L"Batched" : L"Naive";
-            wchar_t title[192]{};
+            wchar_t title[256]{};
             swprintf_s(title,
-                       L"SpriteBatchDemo  |  %s  |  스프라이트 %u개  |  드로우콜 %u  |  %.3f ms  |  %.0f FPS   [Space] 전환  [Esc] 종료",
-                       mode, renderer.SpriteCount(), renderer.DrawCallCount(), ms, fps);
+                       L"SpriteBatchDemo  |  %s  |  스프라이트 %u개  |  드로우콜 %u  |  CPU제출 %.3f ms  |  프레임 %.3f ms  |  %.0f FPS   [Space] 전환  [Esc] 종료",
+                       mode, renderer.SpriteCount(), renderer.DrawCallCount(), renderer.SubmitMs(), ms, fps);
             SetWindowTextW(window.Handle(), title);
         }
     }

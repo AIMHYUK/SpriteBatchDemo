@@ -58,8 +58,11 @@ public:
     void ToggleMode() { m_mode = (m_mode == RenderMode::Naive) ? RenderMode::Batched : RenderMode::Naive; }
 
     RenderMode Mode()          const { return m_mode; }
-    UINT       DrawCallCount() const { return m_drawCalls; }   // 직전 프레임에 부른 드로우 콜 수
+    UINT       DrawCallCount() const { return m_drawCalls; }     // 직전 프레임에 부른 드로우 콜 수
     UINT       SpriteCount()   const { return m_spriteCount; }
+    // 직전 프레임에 드로우를 "제출"하는 데 든 CPU 시간(ms). 배칭이 진짜로 이기는 지표.
+    // 총 프레임 시간은 GPU 바닥에 묶이지만, 이 값은 렌더 스레드 CPU 부하를 그대로 드러낸다.
+    double     SubmitMs()      const { return m_lastSubmitMs; }
 
 private:
     bool CreateDeviceAndSwapChain(HWND hwnd, UINT width, UINT height);
@@ -103,6 +106,9 @@ private:
     UINT       m_spriteCount = 0;
     UINT       m_indexCount  = 0;   // = m_spriteCount * 6
     UINT       m_drawCalls   = 0;
+
+    LARGE_INTEGER m_qpcFreq{};        // 성능 카운터 주파수 (CPU 제출 시간 측정용, 한 번만 조회)
+    double        m_lastSubmitMs = 0.0;
 
     UINT m_width  = 0;
     UINT m_height = 0;
