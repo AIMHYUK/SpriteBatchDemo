@@ -1,0 +1,14 @@
+# 빌드 산출물
+build/
+.vs/
+*.user
+*.suo
+*.exe
+*.pdb
+*.ilk
+*.obj
+
+# Visual Studio 기타
+*.VC.db
+*.VC.opendb
+CMakeSettings.json
