@@ -15,14 +15,16 @@ namespace
     constexpr float kClearColor[4] = { 0.08f, 0.08f, 0.10f, 1.0f };
 
     // 그릴 스프라이트 수. Naive 모드에서 이 수가 곧 드로우 콜 수가 된다.
-    // 값을 키우면 Naive가 급격히 느려지고 Batched는 거의 그대로다 -> 격차가 커진다.
-    constexpr UINT kSpriteCount = 5000;
+    // 값을 키우면 Naive가 급격히 느려지고(드로우 콜 제출에 CPU가 묶임) Batched는 거의
+    // 그대로다 -> 격차가 커진다. 요즘 GPU는 수천 개론 티가 안 나서 10만 개로 잡았다.
+    // (측정 실험: 500 / 2000 / 10000 / 50000 / 100000 으로 바꿔가며 갈라지는 지점을 본다)
+    constexpr UINT kSpriteCount = 100000;
 
-    // 스프라이트를 작게 둔다(겹침=오버드로우를 줄이려고).
+    // 스프라이트를 아주 작게 둔다(겹침=오버드로우를 줄이려고).
     // 크게 그리면 픽셀 셰이더가 병목이 되어 "드로우 콜 비용"이 묻힌다.
-    // 우리가 재려는 건 드로우 콜 개수의 영향이므로 픽셀 비용은 일부러 낮춘다.
-    constexpr float kSpriteMin = 6.0f;
-    constexpr float kSpriteMax = 18.0f;
+    // 수가 10만이라 더 작게(3~8px) 잡아 화면이 픽셀로 포화되지 않게 한다.
+    constexpr float kSpriteMin = 3.0f;
+    constexpr float kSpriteMax = 8.0f;
 
     // 실행할 때마다 같은 장면을 만들기 위한 고정 시드 난수(xorshift32).
     // std::rand는 구현마다 결과가 다르고 시드도 전역이라, 재현 가능한 비교를 위해 직접 둔다.
