@@ -252,7 +252,11 @@ bool Renderer::CreateSpriteResources()
         return false;
 
     // ── 7. 스프라이트 무리를 만들어 정점/인덱스 버퍼로 올린다 ──
-    return BuildSprites();
+    if (!BuildSprites())
+        return false;
+
+    // ── 8. 인스턴싱 리소스 (BuildSprites가 채운 m_instances 크기를 사용) ──
+    return CreateInstanceResources();
 }
 
 bool Renderer::BuildSprites()
@@ -265,7 +269,8 @@ bool Renderer::BuildSprites()
 
     m_sprites.clear();
     m_sprites.reserve(kSpriteCount);
-    m_cpuVertices.assign(kSpriteCount * 4, Vertex{});   // 매 프레임 현재 정점을 여기에 채운다
+    m_cpuVertices.assign(kSpriteCount * 4, Vertex{});     // Naive/Batched용 정점 N*4
+    m_instances.assign(kSpriteCount, InstanceData{});     // Instanced용 인스턴스 N개
 
     Rng rng(12345u);   // 고정 시드 -> 매 실행 같은 장면
 
@@ -310,8 +315,9 @@ bool Renderer::BuildSprites()
         indices.push_back(base + 3);
     }
 
-    // 초기 위치로 정점을 한 번 채운다(이후 매 프레임 Update가 갱신).
+    // 초기 위치로 정점·인스턴스를 한 번 채운다(이후 매 프레임 Update가 활성 모드 것을 갱신).
     RebuildVertices();
+    RebuildInstances();
 
     // 스프라이트가 매 프레임 움직이므로 정점 버퍼는 DYNAMIC. 매 프레임 Map으로 현재 정점을 올린다.
     // (위치가 고정이던 이전 단계에선 IMMUTABLE로 한 번만 구웠다. 이게 정적 vs 동적 배칭의 차이다.)
@@ -386,6 +392,16 @@ void Renderer::RebuildVertices()
     }
 }
 
+void Renderer::RebuildInstances()
+{
+    // 스프라이트의 현재 상태를 인스턴스 하나로 그대로 옮긴다(정점 4개가 아니라 1개).
+    for (UINT i = 0; i < m_spriteCount; ++i)
+    {
+        const SpriteState& s = m_sprites[i];
+        m_instances[i] = { s.x, s.y, s.w, s.h, s.u0, s.v0, s.u1, s.v1, s.r, s.g, s.b };
+    }
+}
+
 void Renderer::Update(float dt)
 {
     if (m_paused)
@@ -410,7 +426,11 @@ void Renderer::Update(float dt)
         else if (s.y > maxY - s.h)   { s.y = maxY - s.h;  s.vy = -s.vy; }
     }
 
-    RebuildVertices();
+    // 현재 모드가 쓰는 데이터만 다시 만든다(불필요한 준비를 줄인다).
+    if (m_mode == RenderMode::Instanced)
+        RebuildInstances();
+    else
+        RebuildVertices();
 }
 
 bool Renderer::CreateAtlasResources()
@@ -469,6 +489,66 @@ bool Renderer::CreateAtlasResources()
 
     if (!HR_CHECK(m_device->CreateBlendState(&bd, m_blendState.GetAddressOf()),
                   L"CreateBlendState"))
+        return false;
+
+    return true;
+}
+
+bool Renderer::CreateInstanceResources()
+{
+    // ── 1. 전용 정점 셰이더 (픽셀 셰이더는 Sprite.ps.hlsl 공용) ──
+    ComPtr<ID3DBlob> vsBlob;
+    if (!CompileShaderFromFile(L"shaders\\SpriteInstanced.vs.hlsl", "main", "vs_5_0", vsBlob))
+        return false;
+    if (!HR_CHECK(m_device->CreateVertexShader(
+            vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr,
+            m_instanceVS.GetAddressOf()),
+            L"CreateVertexShader(Instanced)"))
+        return false;
+
+    // ── 2. 입력 레이아웃: 슬롯0=단위 사각형(per-vertex), 슬롯1=인스턴스 데이터(per-instance) ──
+    // 마지막 인자(InstanceDataStepRate)가 1이면 "인스턴스 하나당 한 번 전진"이다.
+    const D3D11_INPUT_ELEMENT_DESC layout[] = {
+        { "CORNER",     0, DXGI_FORMAT_R32G32_FLOAT,       0,  0, D3D11_INPUT_PER_VERTEX_DATA,   0 },
+        { "INST_POS",   0, DXGI_FORMAT_R32G32_FLOAT,       1,  0, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+        { "INST_SIZE",  0, DXGI_FORMAT_R32G32_FLOAT,       1,  8, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+        { "INST_UV",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+        { "INST_COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT,    1, 32, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+    };
+    if (!HR_CHECK(m_device->CreateInputLayout(
+            layout, _countof(layout),
+            vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
+            m_instanceLayout.GetAddressOf()),
+            L"CreateInputLayout(Instanced)"))
+        return false;
+
+    // ── 3. 단위 사각형 4정점(코너 0~1). 모든 인스턴스가 공유한다. 인덱스는 naive의 {0,1,2,0,2,3} 재사용 ──
+    const float quad[] = {
+        0.0f, 0.0f,   // 0 좌상
+        1.0f, 0.0f,   // 1 우상
+        1.0f, 1.0f,   // 2 우하
+        0.0f, 1.0f,   // 3 좌하
+    };
+    D3D11_BUFFER_DESC qd{};
+    qd.ByteWidth = sizeof(quad);
+    qd.Usage     = D3D11_USAGE_IMMUTABLE;
+    qd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA qdata{};
+    qdata.pSysMem = quad;
+    if (!HR_CHECK(m_device->CreateBuffer(&qd, &qdata, m_baseQuadVB.GetAddressOf()),
+                  L"CreateBuffer(BaseQuad)"))
+        return false;
+
+    // ── 4. 인스턴스 버퍼 (DYNAMIC, N개). 매 프레임 Map으로 현재 인스턴스를 올린다 ──
+    D3D11_BUFFER_DESC ib{};
+    ib.ByteWidth      = static_cast<UINT>(m_instances.size() * sizeof(InstanceData));
+    ib.Usage          = D3D11_USAGE_DYNAMIC;
+    ib.BindFlags      = D3D11_BIND_VERTEX_BUFFER;
+    ib.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    D3D11_SUBRESOURCE_DATA idata{};
+    idata.pSysMem = m_instances.data();
+    if (!HR_CHECK(m_device->CreateBuffer(&ib, &idata, m_instanceBuffer.GetAddressOf()),
+                  L"CreateBuffer(Instance)"))
         return false;
 
     return true;
@@ -623,12 +703,12 @@ void Renderer::Render()
     m_context->OMSetRenderTargets(1, views, nullptr);
     m_context->ClearRenderTargetView(m_backBufferView.Get(), kClearColor);
 
-    // ── 파이프라인 공통 설정 (정점/인덱스 버퍼는 모드마다 다르므로 아래에서 꽂는다) ──
-    m_context->IASetInputLayout(m_inputLayout.Get());
+    // ── 파이프라인 공통 설정 ──
+    // 입력 레이아웃·정점 셰이더·버퍼는 모드마다 다르므로 아래 각 분기에서 꽂는다.
+    // (픽셀 셰이더·토폴로지·래스터·블렌드·아틀라스·상수버퍼는 세 모드 공통)
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     m_context->RSSetState(m_rasterizerState.Get());
 
-    m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
     m_context->PSSetShader(m_pixelShader.Get(), nullptr, 0);
 
     // 아틀라스 텍스처·샘플러를 픽셀 셰이더에 꽂는다(t0/s0).
@@ -669,6 +749,8 @@ void Renderer::Render()
         // 스프라이트 하나씩: 정점 4개를 작은 동적 버퍼에 Map으로 올리고 -> 그린다. N번 반복.
         // 이게 실무의 순진한 경로다. Map(WRITE_DISCARD)마다 드라이버가 버퍼를 새로 잡고,
         // 드로우 콜마다 CPU->드라이버 왕복이 붙는다. 이 per-object 비용이 쌓여 느려진다.
+        m_context->IASetInputLayout(m_inputLayout.Get());
+        m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
         m_context->IASetVertexBuffers(0, 1, m_naiveVertexBuffer.GetAddressOf(), &stride, &offset);
         m_context->IASetIndexBuffer(m_naiveIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
@@ -685,10 +767,13 @@ void Renderer::Render()
 
         m_drawCalls = m_spriteCount;
     }
-    else // Batched
+    else if (m_mode == RenderMode::Batched)
     {
         // 모든 스프라이트의 현재 정점을 '한 번의' Map으로 통째로 올리고 '한 번' 그린다.
         // Naive가 스프라이트마다 나눠 하던 업로드+드로우를, 각각 1회로 합친 것이 배칭이다.
+        m_context->IASetInputLayout(m_inputLayout.Get());
+        m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
+
         D3D11_MAPPED_SUBRESOURCE mappedVB{};
         if (SUCCEEDED(m_context->Map(m_vertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedVB)))
         {
@@ -700,6 +785,32 @@ void Renderer::Render()
         m_context->IASetIndexBuffer(m_indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
         m_context->DrawIndexed(m_indexCount, 0, 0);
+
+        m_drawCalls = 1;
+    }
+    else // Instanced
+    {
+        // 정점은 단위 사각형 4개로 고정. 스프라이트별 데이터(인스턴스 N개)만 올린다.
+        // Batched가 올리던 정점 N*4개(위치·UV·색) 대신 인스턴스 N개라 업로드가 약 1/3.
+        // 그리기는 DrawIndexedInstanced 한 번 — GPU가 단위 사각형을 N번 찍으며 각자 인스턴스를 읽는다.
+        m_context->IASetInputLayout(m_instanceLayout.Get());
+        m_context->VSSetShader(m_instanceVS.Get(), nullptr, 0);
+
+        D3D11_MAPPED_SUBRESOURCE mappedInst{};
+        if (SUCCEEDED(m_context->Map(m_instanceBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedInst)))
+        {
+            memcpy(mappedInst.pData, m_instances.data(), m_instances.size() * sizeof(InstanceData));
+            m_context->Unmap(m_instanceBuffer.Get(), 0);
+        }
+
+        // 슬롯 0 = 단위 사각형(공유), 슬롯 1 = 인스턴스 데이터
+        ID3D11Buffer* vbs[2]     = { m_baseQuadVB.Get(), m_instanceBuffer.Get() };
+        UINT          strides[2] = { sizeof(float) * 2, sizeof(InstanceData) };
+        UINT          offsets[2] = { 0, 0 };
+        m_context->IASetVertexBuffers(0, 2, vbs, strides, offsets);
+        m_context->IASetIndexBuffer(m_naiveIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+
+        m_context->DrawIndexedInstanced(6, m_spriteCount, 0, 0, 0);
 
         m_drawCalls = 1;
     }

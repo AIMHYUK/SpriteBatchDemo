@@ -47,7 +47,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
         double fps = 0.0, ms = 0.0;
         if (timer.TryGetStats(fps, ms))
         {
-            const wchar_t* mode = (renderer.Mode() == RenderMode::Batched) ? L"Batched" : L"Naive";
+            const wchar_t* mode =
+                (renderer.Mode() == RenderMode::Batched)   ? L"Batched"   :
+                (renderer.Mode() == RenderMode::Instanced) ? L"Instanced" : L"Naive";
             const wchar_t* pause = renderer.IsPaused() ? L" [정지]" : L"";
             wchar_t title[256]{};
             swprintf_s(title,

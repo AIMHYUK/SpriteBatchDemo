@@ -47,13 +47,25 @@ struct FrameConstants
 };
 static_assert(sizeof(FrameConstants) % 16 == 0, "상수 버퍼는 16바이트 배수여야 한다");
 
-// 그리는 방식. 이 하나만 바꿔가며 성능을 비교하는 것이 이 프로젝트의 전부다.
+// 스프라이트 하나당 하나(per-instance)로 올리는 데이터. Batched의 정점(N*4)과 달리
+// 인스턴스는 N개뿐이라 업로드 대역폭이 약 1/3로 준다. shaders/SpriteInstanced.vs.hlsl과 짝.
+struct InstanceData
+{
+    float x, y;              // 좌상단 픽셀 위치
+    float w, h;              // 크기
+    float u0, v0, u1, v1;    // 아틀라스 UV 사각형
+    float r, g, b;           // 색
+};
+
+// 그리는 방식. 이것만 바꿔가며 성능을 비교하는 것이 이 프로젝트의 전부다.
 enum class RenderMode
 {
-    // 스프라이트마다 DrawIndexed를 한 번씩 부른다. 드로우 콜 = 스프라이트 수.
+    // 스프라이트마다 정점을 올리고 DrawIndexed. 드로우 콜 = 스프라이트 수.
     Naive,
-    // 모든 스프라이트를 한 버퍼로 묶어 DrawIndexed를 딱 한 번 부른다. 드로우 콜 = 1.
+    // 모든 정점을 한 버퍼에 모아 한 번 올리고 DrawIndexed 한 번. 드로우 콜 = 1.
     Batched,
+    // 단위 사각형 1개 + per-instance 데이터로 DrawIndexedInstanced 한 번. 업로드가 가장 적다.
+    Instanced,
 };
 
 // D3D11 디바이스·스왑체인·백버퍼 뷰를 소유하고, 스프라이트 무리를 한 프레임 그린다.
@@ -70,8 +82,13 @@ public:
 
     void Render();
 
-    // Naive <-> Batched 전환. main이 Space 키에 연결한다.
-    void ToggleMode() { m_mode = (m_mode == RenderMode::Naive) ? RenderMode::Batched : RenderMode::Naive; }
+    // Naive → Batched → Instanced 순환. main이 Space 키에 연결한다.
+    void ToggleMode()
+    {
+        m_mode = (m_mode == RenderMode::Naive)   ? RenderMode::Batched
+               : (m_mode == RenderMode::Batched) ? RenderMode::Instanced
+                                                 : RenderMode::Naive;
+    }
 
     // 움직임 일시정지(숫자를 읽거나 스크린샷 찍을 때). main이 P 키에 연결한다.
     void TogglePause() { m_paused = !m_paused; }
@@ -103,6 +120,12 @@ private:
     // m_sprites의 현재 상태로 m_cpuVertices(정점 N*4개)를 다시 채운다.
     void RebuildVertices();
 
+    // m_sprites의 현재 상태로 m_instances(인스턴스 N개)를 다시 채운다. Instanced 모드용.
+    void RebuildInstances();
+
+    // 인스턴싱 리소스(단위 사각형 VB, 인스턴스 버퍼, 전용 셰이더·입력 레이아웃)를 만든다.
+    bool CreateInstanceResources();
+
     ComPtr<ID3D11Device>           m_device;
     ComPtr<ID3D11DeviceContext>    m_context;
     ComPtr<IDXGISwapChain1>        m_swapChain;
@@ -122,8 +145,15 @@ private:
     ComPtr<ID3D11Buffer>          m_naiveVertexBuffer;  // DYNAMIC, 정점 4개
     ComPtr<ID3D11Buffer>          m_naiveIndexBuffer;   // 로컬 인덱스 6개 {0,1,2,0,2,3}
     std::vector<SpriteState>      m_sprites;            // 스프라이트 상태(위치·속도 등). 매 프레임 갱신
-    std::vector<Vertex>           m_cpuVertices;        // 현재 상태로 만든 정점 N*4개 (양쪽 모드가 여기서 업로드)
+    std::vector<Vertex>           m_cpuVertices;        // 현재 상태로 만든 정점 N*4개 (Naive/Batched가 업로드)
     bool                          m_paused = false;     // 움직임 일시정지
+
+    // [Instanced] 단위 사각형 1개 + per-instance 데이터로 N개를 한 번에 그린다.
+    ComPtr<ID3D11VertexShader>    m_instanceVS;         // 전용 정점 셰이더
+    ComPtr<ID3D11InputLayout>     m_instanceLayout;     // 슬롯0=단위사각형, 슬롯1=per-instance
+    ComPtr<ID3D11Buffer>          m_baseQuadVB;         // 단위 사각형 4정점(코너 0~1), 모든 인스턴스 공유
+    ComPtr<ID3D11Buffer>          m_instanceBuffer;     // DYNAMIC, 인스턴스 N개
+    std::vector<InstanceData>     m_instances;          // 현재 상태로 만든 인스턴스 N개
     ComPtr<ID3D11RasterizerState> m_rasterizerState; // 컬링 규칙
 
     // ── 텍스처 아틀라스 ──

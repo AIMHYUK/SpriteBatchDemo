@@ -108,6 +108,7 @@
   <ItemGroup>
     <None Include="shaders\Sprite.vs.hlsl" />
     <None Include="shaders\Sprite.ps.hlsl" />
+    <None Include="shaders\SpriteInstanced.vs.hlsl" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
