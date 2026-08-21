@@ -229,22 +229,28 @@ SpriteBatchDemo:    픽셀 좌표 N×4개(버퍼에 구움)        →  스프�
   </div>
   <p class="sub">→ CPU 제출 <b>약 2,900배</b> 감소 (Batched는 업로드 0 → 드로우 1번만 남음)</p>
 
-  <h3>② 동적 배칭 — 매 프레임 이동 (실제 게임 조건, 현재 빌드)</h3>
-  <p class="sub">스프라이트가 움직여 정점을 매 프레임 재업로드. Batched도 <b>한 번의 큰 업로드</b> 비용을 낸다.</p>
+  <h3>② 동적 배칭 — 매 프레임 이동 (실제 게임 조건, 현재 빌드, 3모드)</h3>
+  <p class="sub">스프라이트가 움직여 매 프레임 재업로드. Batched는 정점을 한 번에, Instanced는 인스턴스 N개(~1/3 데이터)만 올린다.</p>
   <div class="tblwrap">
   <table>
-    <thead><tr><th>모드</th><th class="mono">드로우 콜</th><th class="mono">CPU 제출 시간</th><th class="mono">총 프레임 시간</th><th class="mono">FPS</th></tr></thead>
+    <thead><tr><th>모드</th><th class="mono">드로우 콜</th><th class="mono">CPU 제출</th><th>올리는 데이터</th><th class="mono">FPS</th></tr></thead>
     <tbody>
-      <tr><td class="tagN">Naive</td><td class="mono">20,000</td><td class="mono">1.812 ms</td><td class="mono">3.236 ms</td><td class="mono">309</td></tr>
-      <tr><td class="tagB">Batched</td><td class="mono">1</td><td class="mono good">0.357 ms</td><td class="mono">2.305 ms</td><td class="mono">434</td></tr>
+      <tr><td class="tagN">Naive</td><td class="mono">20,000</td><td class="mono">~1.8 ms</td><td>정점 N×4 (N번 쪼개)</td><td class="mono">309</td></tr>
+      <tr><td class="tagB">Batched</td><td class="mono">1</td><td class="mono">~0.3 ms</td><td>정점 N×4 (한 번)</td><td class="mono">434</td></tr>
+      <tr class="me"><td class="tagB">Instanced</td><td class="mono">1</td><td class="mono good">~0.14 ms</td><td>인스턴스 N (한 번)</td><td class="mono">463</td></tr>
     </tbody>
   </table>
   </div>
   <ul>
-    <li>→ CPU 제출 <b>약 5배</b> 감소. 큰 업로드 한 번 vs N번 쪼갠 업로드 — 실제 게임에서의 실질 이득</li>
-    <li>정적(2,900배)은 배칭의 상한, 동적(약 5배)은 실전 이득. 핵심은 같다 — 렌더 스레드 CPU를 비운다</li>
-    <li>총 프레임 시간은 GPU 바닥에 묶여 1.4~1.6배 (양쪽 렌더링 양이 같으므로)</li>
+    <li>Naive→Batched 약 5~8배, <b>Batched→Instanced 약 2배</b>(올리는 데이터 1/3), Naive→Instanced 약 13배</li>
+    <li>정적(2,900배)은 배칭의 상한, 동적은 실전 이득. 핵심은 같다 — 렌더 스레드 CPU를 비운다</li>
+    <li>CPU측 비용이라 실행마다 흔들린다. 견고한 결론은 <b>순서와 자릿수</b></li>
   </ul>
+
+  <div class="note"><b>심화 — 제출 시간을 Map()/memcpy로 쪼개보니:</b> Batched의 <code>Map()</code>은 이동·정지 모두
+  <b>0.001ms(안 기다림)</b>. <code>WRITE_DISCARD</code>가 VidMM rename으로 GPU 대기를 없앤 것.
+  제출 시간의 거의 전부는 <b>memcpy</b>(CPU 복사)였다 — 즉 이 지표는 드라이버/GPU가 아니라 CPU 비용.
+  추측하지 않고 쪼개서 측정해 확인했다.</div>
 </section>
 
 <!-- STRUCTURE -->
