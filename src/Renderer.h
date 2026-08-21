@@ -94,6 +94,11 @@ public:
     void TogglePause() { m_paused = !m_paused; }
     bool IsPaused() const { return m_paused; }
 
+    // 컬링 on/off. main이 C 키에 연결한다. 카메라는 Update가 WASD로 직접 읽는다.
+    void ToggleCull() { m_cull = !m_cull; }
+    bool IsCulling()    const { return m_cull; }
+    UINT VisibleCount() const { return m_visibleCount; }   // 이번 프레임 실제로 그린(화면에 걸친) 수
+
     RenderMode Mode()          const { return m_mode; }
     UINT       DrawCallCount() const { return m_drawCalls; }     // 직전 프레임에 부른 드로우 콜 수
     UINT       SpriteCount()   const { return m_spriteCount; }
@@ -148,9 +153,17 @@ private:
     // 바로 이 "per-object 업로드 + 드로우"가 배칭이 없애는 비용이다.
     ComPtr<ID3D11Buffer>          m_naiveVertexBuffer;  // DYNAMIC, 정점 4개
     ComPtr<ID3D11Buffer>          m_naiveIndexBuffer;   // 로컬 인덱스 6개 {0,1,2,0,2,3}
-    std::vector<SpriteState>      m_sprites;            // 스프라이트 상태(위치·속도 등). 매 프레임 갱신
-    std::vector<Vertex>           m_cpuVertices;        // 현재 상태로 만든 정점 N*4개 (Naive/Batched가 업로드)
+    std::vector<SpriteState>      m_sprites;            // 스프라이트 상태(월드 좌표). 매 프레임 갱신
+    std::vector<Vertex>           m_cpuVertices;        // 화면에 걸친 정점만 앞에서부터 채움 (Naive/Batched가 업로드)
     bool                          m_paused = false;     // 움직임 일시정지
+
+    // ── 카메라 + 컬링 ──
+    // 스프라이트는 화면보다 큰 월드를 돌아다니고, 카메라(좌상단 오프셋)가 그 일부를 본다.
+    // 컬링 ON이면 화면 밖 스프라이트를 CPU에서 걸러 그리기 목록에 안 넣는다.
+    float m_camX = 0.0f, m_camY = 0.0f;     // 카메라 좌상단 (월드 좌표)
+    float m_worldW = 0.0f, m_worldH = 0.0f; // 월드 크기 (화면보다 큼)
+    bool  m_cull = false;                   // 컬링 on/off (C 키)
+    UINT  m_visibleCount = 0;               // 이번 프레임 실제로 그리는 스프라이트 수
 
     // [Instanced] 단위 사각형 1개 + per-instance 데이터로 N개를 한 번에 그린다.
     ComPtr<ID3D11VertexShader>    m_instanceVS;         // 전용 정점 셰이더

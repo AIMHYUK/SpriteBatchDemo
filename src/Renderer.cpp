@@ -26,6 +26,10 @@ namespace
     constexpr float kSpriteMin = 6.0f;
     constexpr float kSpriteMax = 16.0f;
 
+    // 월드는 화면의 3배(가로·세로). 화면 밖 영역이 있어야 컬링이 걸러낼 게 생긴다.
+    constexpr float kWorldScale  = 3.0f;
+    constexpr float kCameraSpeed = 900.0f;   // WASD 카메라 이동 속도 (px/초)
+
     // 실행할 때마다 같은 장면을 만들기 위한 고정 시드 난수(xorshift32).
     // std::rand는 구현마다 결과가 다르고 시드도 전역이라, 재현 가능한 비교를 위해 직접 둔다.
     struct Rng
@@ -264,6 +268,12 @@ bool Renderer::BuildSprites()
     m_spriteCount = kSpriteCount;
     m_indexCount  = kSpriteCount * 6;   // 사각형 하나 = 삼각형 2개 = 인덱스 6개
 
+    // 월드는 화면보다 크게. 카메라는 처음엔 월드 중앙을 본다.
+    m_worldW = m_width  * kWorldScale;
+    m_worldH = m_height * kWorldScale;
+    m_camX = (m_worldW - m_width)  * 0.5f;
+    m_camY = (m_worldH - m_height) * 0.5f;
+
     std::vector<uint32_t> indices;
     indices.reserve(m_indexCount);
 
@@ -279,9 +289,9 @@ bool Renderer::BuildSprites()
         SpriteState s{};
         s.w = rng.Range(kSpriteMin, kSpriteMax);
         s.h = rng.Range(kSpriteMin, kSpriteMax);
-        // 스프라이트가 화면 안에 들어오도록 위치 범위를 크기만큼 줄인다.
-        s.x = rng.Range(0.0f, static_cast<float>(m_width)  - s.w);
-        s.y = rng.Range(0.0f, static_cast<float>(m_height) - s.h);
+        // 월드 전체에 뿌린다(화면보다 큼). 카메라가 그 일부만 본다.
+        s.x = rng.Range(0.0f, m_worldW - s.w);
+        s.y = rng.Range(0.0f, m_worldH - s.h);
 
         // 속도: 각 축 50~180 px/초, 방향은 랜덤. 화면 경계에서 튕긴다.
         s.vx = (rng.Unit() < 0.5f ? -1.0f : 1.0f) * rng.Range(50.0f, 180.0f);
@@ -379,26 +389,49 @@ bool Renderer::BuildSprites()
 
 void Renderer::RebuildVertices()
 {
-    // 스프라이트의 현재 상태로 정점 N*4개를 다시 만든다. 두 모드 모두 이 결과를 GPU에 올린다.
-    // 시계 방향(0→1→2→3), UV는 코너에 맞춘다(좌상 u0v0, 우상 u1v0, 우하 u1v1, 좌하 u0v1).
+    // 월드 좌표 → 화면 좌표(= 월드 - 카메라)로 바꿔 정점을 만든다.
+    // 컬링 ON이면 화면 사각형과 안 겹치는 스프라이트는 건너뛴다(그리기 목록에서 제외).
+    // 보이는 것만 버퍼 앞에서부터 촘촘히 채우고, 그 개수를 m_visibleCount에 담는다.
+    const float screenW = static_cast<float>(m_width);
+    const float screenH = static_cast<float>(m_height);
+    m_visibleCount = 0;
+
     for (UINT i = 0; i < m_spriteCount; ++i)
     {
         const SpriteState& s = m_sprites[i];
-        const uint32_t base = i * 4;
-        m_cpuVertices[base + 0] = { s.x,       s.y,       s.u0, s.v0, s.r, s.g, s.b, 1.0f };
-        m_cpuVertices[base + 1] = { s.x + s.w, s.y,       s.u1, s.v0, s.r, s.g, s.b, 1.0f };
-        m_cpuVertices[base + 2] = { s.x + s.w, s.y + s.h, s.u1, s.v1, s.r, s.g, s.b, 1.0f };
-        m_cpuVertices[base + 3] = { s.x,       s.y + s.h, s.u0, s.v1, s.r, s.g, s.b, 1.0f };
+        const float sx = s.x - m_camX;   // 화면 좌표
+        const float sy = s.y - m_camY;
+
+        if (m_cull && (sx + s.w < 0.0f || sx > screenW || sy + s.h < 0.0f || sy > screenH))
+            continue;   // 화면 밖 → 컬링
+
+        const uint32_t base = m_visibleCount * 4;
+        m_cpuVertices[base + 0] = { sx,       sy,       s.u0, s.v0, s.r, s.g, s.b, 1.0f };
+        m_cpuVertices[base + 1] = { sx + s.w, sy,       s.u1, s.v0, s.r, s.g, s.b, 1.0f };
+        m_cpuVertices[base + 2] = { sx + s.w, sy + s.h, s.u1, s.v1, s.r, s.g, s.b, 1.0f };
+        m_cpuVertices[base + 3] = { sx,       sy + s.h, s.u0, s.v1, s.r, s.g, s.b, 1.0f };
+        m_visibleCount++;
     }
 }
 
 void Renderer::RebuildInstances()
 {
-    // 스프라이트의 현재 상태를 인스턴스 하나로 그대로 옮긴다(정점 4개가 아니라 1개).
+    // RebuildVertices와 같은 컬링을 인스턴스에 적용. 보이는 것만 앞에서부터 채운다.
+    const float screenW = static_cast<float>(m_width);
+    const float screenH = static_cast<float>(m_height);
+    m_visibleCount = 0;
+
     for (UINT i = 0; i < m_spriteCount; ++i)
     {
         const SpriteState& s = m_sprites[i];
-        m_instances[i] = { s.x, s.y, s.w, s.h, s.u0, s.v0, s.u1, s.v1, s.r, s.g, s.b };
+        const float sx = s.x - m_camX;
+        const float sy = s.y - m_camY;
+
+        if (m_cull && (sx + s.w < 0.0f || sx > screenW || sy + s.h < 0.0f || sy > screenH))
+            continue;
+
+        m_instances[m_visibleCount] = { sx, sy, s.w, s.h, s.u0, s.v0, s.u1, s.v1, s.r, s.g, s.b };
+        m_visibleCount++;
     }
 }
 
@@ -407,11 +440,26 @@ void Renderer::Update(float dt)
     if (m_paused)
         return;
 
-    // 큰 dt(첫 프레임·정지 해제 직후)에 스프라이트가 화면 밖으로 튀는 것을 막는다.
+    // 큰 dt(첫 프레임·정지 해제 직후)에 스프라이트가 튀는 것을 막는다.
     if (dt > 0.05f) dt = 0.05f;
 
-    const float maxX = static_cast<float>(m_width);
-    const float maxY = static_cast<float>(m_height);
+    // ── 카메라 이동 (WASD) ── GetAsyncKeyState로 눌린 상태를 직접 읽는다.
+    float cx = 0.0f, cy = 0.0f;
+    if (GetAsyncKeyState('W') & 0x8000) cy -= 1.0f;
+    if (GetAsyncKeyState('S') & 0x8000) cy += 1.0f;
+    if (GetAsyncKeyState('A') & 0x8000) cx -= 1.0f;
+    if (GetAsyncKeyState('D') & 0x8000) cx += 1.0f;
+    m_camX += cx * kCameraSpeed * dt;
+    m_camY += cy * kCameraSpeed * dt;
+    // 카메라가 월드를 벗어나지 않게 클램프
+    const float maxCamX = m_worldW - static_cast<float>(m_width);
+    const float maxCamY = m_worldH - static_cast<float>(m_height);
+    if (m_camX < 0.0f) m_camX = 0.0f; else if (m_camX > maxCamX) m_camX = maxCamX;
+    if (m_camY < 0.0f) m_camY = 0.0f; else if (m_camY > maxCamY) m_camY = maxCamY;
+
+    // ── 물리 (월드 경계에서 튕김) ──
+    const float maxX = m_worldW;
+    const float maxY = m_worldH;
 
     // 물리 갱신: 이동 후 화면 경계에서 튕긴다(속도 반전 + 경계 안으로 되돌림).
     // 이 계산은 두 모드가 똑같이 필요한 공통 준비라, CPU 제출 시간 측정 바깥에 둔다.
@@ -755,7 +803,7 @@ void Renderer::Render()
         m_context->IASetVertexBuffers(0, 1, m_naiveVertexBuffer.GetAddressOf(), &stride, &offset);
         m_context->IASetIndexBuffer(m_naiveIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-        for (UINT i = 0; i < m_spriteCount; ++i)
+        for (UINT i = 0; i < m_visibleCount; ++i)
         {
             D3D11_MAPPED_SUBRESOURCE mappedVB{};
             if (SUCCEEDED(m_context->Map(m_naiveVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedVB)))
@@ -766,7 +814,7 @@ void Renderer::Render()
             m_context->DrawIndexed(6, 0, 0);
         }
 
-        m_drawCalls = m_spriteCount;
+        m_drawCalls = m_visibleCount;
     }
     else if (m_mode == RenderMode::Batched)
     {
@@ -784,7 +832,7 @@ void Renderer::Render()
         QueryPerformanceCounter(&t1);
         if (SUCCEEDED(hr))
         {
-            memcpy(mappedVB.pData, m_cpuVertices.data(), m_cpuVertices.size() * sizeof(Vertex));
+            memcpy(mappedVB.pData, m_cpuVertices.data(), m_visibleCount * 4 * sizeof(Vertex));
             QueryPerformanceCounter(&t2);
             m_context->Unmap(m_vertexBuffer.Get(), 0);
         }
@@ -795,7 +843,7 @@ void Renderer::Render()
         m_context->IASetVertexBuffers(0, 1, m_vertexBuffer.GetAddressOf(), &stride, &offset);
         m_context->IASetIndexBuffer(m_indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-        m_context->DrawIndexed(m_indexCount, 0, 0);
+        m_context->DrawIndexed(m_visibleCount * 6, 0, 0);
 
         m_drawCalls = 1;
     }
@@ -815,7 +863,7 @@ void Renderer::Render()
         QueryPerformanceCounter(&t1);
         if (SUCCEEDED(hr))
         {
-            memcpy(mappedInst.pData, m_instances.data(), m_instances.size() * sizeof(InstanceData));
+            memcpy(mappedInst.pData, m_instances.data(), m_visibleCount * sizeof(InstanceData));
             QueryPerformanceCounter(&t2);
             m_context->Unmap(m_instanceBuffer.Get(), 0);
         }
@@ -830,7 +878,7 @@ void Renderer::Render()
         m_context->IASetVertexBuffers(0, 2, vbs, strides, offsets);
         m_context->IASetIndexBuffer(m_naiveIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-        m_context->DrawIndexedInstanced(6, m_spriteCount, 0, 0, 0);
+        m_context->DrawIndexedInstanced(6, m_visibleCount, 0, 0, 0);
 
         m_drawCalls = 1;
     }

@@ -24,12 +24,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
         renderer.Resize(width, height);
     });
 
-    // Space = Naive <-> Batched 전환, P = 움직임 일시정지. 그 외 키는 무시.
+    // Space = 모드 순환, P = 일시정지, C = 컬링 on/off. (WASD 카메라는 Renderer가 직접 읽음)
     window.SetKeyDownCallback([&renderer](WPARAM key) {
         if (key == VK_SPACE)
             renderer.ToggleMode();
         else if (key == 'P')
             renderer.TogglePause();
+        else if (key == 'C')
+            renderer.ToggleCull();
     });
 
     window.Show(nCmdShow);
@@ -51,10 +53,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
                 (renderer.Mode() == RenderMode::Batched)   ? L"Batched"   :
                 (renderer.Mode() == RenderMode::Instanced) ? L"Instanced" : L"Naive";
             const wchar_t* pause = renderer.IsPaused() ? L" [정지]" : L"";
-            wchar_t title[320]{};
+            const wchar_t* cull  = renderer.IsCulling() ? L"컬링ON" : L"컬링OFF";
+            wchar_t title[400]{};
             swprintf_s(title,
-                       L"SpriteBatchDemo  |  %s%s  |  스프라이트 %u개  |  드로우콜 %u  |  CPU제출 %.3f ms (Map %.3f / copy %.3f)  |  프레임 %.3f ms  |  %.0f FPS   [Space]전환 [P]정지 [Esc]종료",
-                       mode, pause, renderer.SpriteCount(), renderer.DrawCallCount(), renderer.SubmitMs(), renderer.MapMs(), renderer.CopyMs(), ms, fps);
+                       L"SpriteBatchDemo  |  %s%s  |  %s  |  그림 %u/%u  |  드로우콜 %u  |  CPU제출 %.3f ms (Map %.3f/copy %.3f)  |  프레임 %.3f ms  |  %.0f FPS   [Space]모드 [C]컬링 [P]정지 [WASD]카메라 [Esc]",
+                       mode, pause, cull, renderer.VisibleCount(), renderer.SpriteCount(), renderer.DrawCallCount(), renderer.SubmitMs(), renderer.MapMs(), renderer.CopyMs(), ms, fps);
             SetWindowTextW(window.Handle(), title);
         }
     }
