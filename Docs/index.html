@@ -251,6 +251,26 @@ SpriteBatchDemo:    픽셀 좌표 N×4개(버퍼에 구움)        →  스프�
   <b>0.001ms(안 기다림)</b>. <code>WRITE_DISCARD</code>가 VidMM rename으로 GPU 대기를 없앤 것.
   제출 시간의 거의 전부는 <b>memcpy</b>(CPU 복사)였다 — 즉 이 지표는 드라이버/GPU가 아니라 CPU 비용.
   추측하지 않고 쪼개서 측정해 확인했다.</div>
+
+  <h3>③ 컬링 — 안 보이는 건 그리지 않는다</h3>
+  <p class="sub">스프라이트를 화면 3배 월드에 뿌리고 카메라(WASD)로 일부만 본다. 화면 밖은 CPU에서 걸러 draw 대상에서 뺀다.</p>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th>모드</th><th>컬링</th><th class="mono">그림</th><th class="mono">드로우 콜</th><th class="mono">CPU 제출</th><th class="mono">FPS</th></tr></thead>
+    <tbody>
+      <tr><td class="tagN">Naive</td><td>OFF</td><td class="mono">20,000</td><td class="mono">20,000</td><td class="mono">1.586 ms</td><td class="mono">423</td></tr>
+      <tr class="me"><td class="tagN">Naive</td><td>ON</td><td class="mono">2,347</td><td class="mono good">2,347</td><td class="mono good">0.123 ms</td><td class="mono">1410</td></tr>
+      <tr><td class="tagB">Instanced</td><td>OFF</td><td class="mono">20,000</td><td class="mono">1</td><td class="mono">0.046 ms</td><td class="mono">1253</td></tr>
+      <tr class="me"><td class="tagB">Instanced</td><td>ON</td><td class="mono">2,240</td><td class="mono">1</td><td class="mono good">0.014 ms</td><td class="mono">1973</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="shots">
+    <figure><img src="images/cull_off.png" alt="컬링 OFF 실행 화면"><figcaption>컬링 OFF · 드로우콜 20,000 — 화면 밖까지 다 처리(낭비)</figcaption></figure>
+    <figure><img src="images/cull_on.png" alt="컬링 ON 실행 화면"><figcaption>컬링 ON · 드로우콜 2,347 — 화면은 거의 동일, 처리량만 다름</figcaption></figure>
+  </div>
+  <div class="note"><b>핵심:</b> 컬링 ON/OFF는 화면이 거의 똑같아 보인다(둘 다 ~2,300개). 다른 것은 <b>처리량</b> — 안 보이면 처리하지 않는다.
+  배칭(싸게 그리기)·인스턴싱(적게 올리기)·컬링(아예 안 그리기) 세 최적화가 겹쳐 쌓인다.</div>
 </section>
 
 <!-- STRUCTURE -->
