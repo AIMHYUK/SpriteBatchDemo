@@ -101,6 +101,10 @@ public:
     // 총 프레임 시간은 GPU 바닥에 묶이지만, 이 값은 렌더 스레드 CPU 부하를 그대로 드러낸다.
     double     SubmitMs()      const { return m_lastSubmitMs; }
 
+    // 제출 시간 세부(Batched/Instanced의 단일 업로드 한정). 정지 vs 이동 차이의 출처를 가린다.
+    double     MapMs()         const { return m_mapMs; }    // Map() 호출 시간 (드라이버/rename/GPU대기)
+    double     CopyMs()        const { return m_copyMs; }   // memcpy 시간 (CPU/캐시/클럭)
+
 private:
     bool CreateDeviceAndSwapChain(HWND hwnd, UINT width, UINT height);
     bool CreateBackBufferView();
@@ -173,6 +177,8 @@ private:
 
     LARGE_INTEGER m_qpcFreq{};        // 성능 카운터 주파수 (CPU 제출 시간 측정용, 한 번만 조회)
     double        m_lastSubmitMs = 0.0;
+    double        m_mapMs        = 0.0;   // 직전 Map() 호출 시간
+    double        m_copyMs       = 0.0;   // 직전 memcpy 시간
 
     UINT m_width  = 0;
     UINT m_height = 0;

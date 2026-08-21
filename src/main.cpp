@@ -51,10 +51,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
                 (renderer.Mode() == RenderMode::Batched)   ? L"Batched"   :
                 (renderer.Mode() == RenderMode::Instanced) ? L"Instanced" : L"Naive";
             const wchar_t* pause = renderer.IsPaused() ? L" [정지]" : L"";
-            wchar_t title[256]{};
+            wchar_t title[320]{};
             swprintf_s(title,
-                       L"SpriteBatchDemo  |  %s%s  |  스프라이트 %u개  |  드로우콜 %u  |  CPU제출 %.3f ms  |  프레임 %.3f ms  |  %.0f FPS   [Space]전환 [P]정지 [Esc]종료",
-                       mode, pause, renderer.SpriteCount(), renderer.DrawCallCount(), renderer.SubmitMs(), ms, fps);
+                       L"SpriteBatchDemo  |  %s%s  |  스프라이트 %u개  |  드로우콜 %u  |  CPU제출 %.3f ms (Map %.3f / copy %.3f)  |  프레임 %.3f ms  |  %.0f FPS   [Space]전환 [P]정지 [Esc]종료",
+                       mode, pause, renderer.SpriteCount(), renderer.DrawCallCount(), renderer.SubmitMs(), renderer.MapMs(), renderer.CopyMs(), ms, fps);
             SetWindowTextW(window.Handle(), title);
         }
     }

@@ -749,6 +749,7 @@ void Renderer::Render()
         // 스프라이트 하나씩: 정점 4개를 작은 동적 버퍼에 Map으로 올리고 -> 그린다. N번 반복.
         // 이게 실무의 순진한 경로다. Map(WRITE_DISCARD)마다 드라이버가 버퍼를 새로 잡고,
         // 드로우 콜마다 CPU->드라이버 왕복이 붙는다. 이 per-object 비용이 쌓여 느려진다.
+        m_mapMs = 0.0; m_copyMs = 0.0;   // Naive는 작은 Map을 N번이라 단일 분리가 의미 없음
         m_context->IASetInputLayout(m_inputLayout.Get());
         m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
         m_context->IASetVertexBuffers(0, 1, m_naiveVertexBuffer.GetAddressOf(), &stride, &offset);
@@ -774,12 +775,22 @@ void Renderer::Render()
         m_context->IASetInputLayout(m_inputLayout.Get());
         m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
 
+        // Map() 호출과 memcpy를 따로 잰다 — 정지 vs 이동 차이가 어디서 나는지 가리기 위해.
+        // Map()이 늘면 드라이버/rename/GPU대기, memcpy가 늘면 CPU측(캐시·클럭).
         D3D11_MAPPED_SUBRESOURCE mappedVB{};
-        if (SUCCEEDED(m_context->Map(m_vertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedVB)))
+        LARGE_INTEGER t0{}, t1{}, t2{};
+        QueryPerformanceCounter(&t0);
+        const HRESULT hr = m_context->Map(m_vertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedVB);
+        QueryPerformanceCounter(&t1);
+        if (SUCCEEDED(hr))
         {
             memcpy(mappedVB.pData, m_cpuVertices.data(), m_cpuVertices.size() * sizeof(Vertex));
+            QueryPerformanceCounter(&t2);
             m_context->Unmap(m_vertexBuffer.Get(), 0);
         }
+        else { t2 = t1; }
+        m_mapMs  = double(t1.QuadPart - t0.QuadPart) * 1000.0 / m_qpcFreq.QuadPart;
+        m_copyMs = double(t2.QuadPart - t1.QuadPart) * 1000.0 / m_qpcFreq.QuadPart;
 
         m_context->IASetVertexBuffers(0, 1, m_vertexBuffer.GetAddressOf(), &stride, &offset);
         m_context->IASetIndexBuffer(m_indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
@@ -796,12 +807,21 @@ void Renderer::Render()
         m_context->IASetInputLayout(m_instanceLayout.Get());
         m_context->VSSetShader(m_instanceVS.Get(), nullptr, 0);
 
+        // Batched와 동일하게 Map()과 memcpy를 따로 잰다.
         D3D11_MAPPED_SUBRESOURCE mappedInst{};
-        if (SUCCEEDED(m_context->Map(m_instanceBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedInst)))
+        LARGE_INTEGER t0{}, t1{}, t2{};
+        QueryPerformanceCounter(&t0);
+        const HRESULT hr = m_context->Map(m_instanceBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedInst);
+        QueryPerformanceCounter(&t1);
+        if (SUCCEEDED(hr))
         {
             memcpy(mappedInst.pData, m_instances.data(), m_instances.size() * sizeof(InstanceData));
+            QueryPerformanceCounter(&t2);
             m_context->Unmap(m_instanceBuffer.Get(), 0);
         }
+        else { t2 = t1; }
+        m_mapMs  = double(t1.QuadPart - t0.QuadPart) * 1000.0 / m_qpcFreq.QuadPart;
+        m_copyMs = double(t2.QuadPart - t1.QuadPart) * 1000.0 / m_qpcFreq.QuadPart;
 
         // 슬롯 0 = 단위 사각형(공유), 슬롯 1 = 인스턴스 데이터
         ID3D11Buffer* vbs[2]     = { m_baseQuadVB.Get(), m_instanceBuffer.Get() };
