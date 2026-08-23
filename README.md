@@ -71,17 +71,18 @@ Instanced는 정점 대신 **인스턴스 N개(약 1/3 데이터)**만 올린다
 
 | Batched | `Map()` | `memcpy` | 제출 |
 |---------|---------|----------|------|
-| 이동 | 0.001 ms | 0.220 ms | 0.222 ms |
+| 이동 | 0.001 ms | 0.331 ms | 0.334 ms |
 | 정지 | 0.001 ms | 0.349 ms | 0.354 ms |
 
 - **`Map()`은 0.001ms — 안 기다린다.** `WRITE_DISCARD`는 VidMM(비디오 메모리 관리자)이 버퍼를
   rename(다른 물리 메모리로 교체)해 GPU 대기를 없앤다. 이 데모는 rename 풀이 넉넉해 stall이 없다.
   ([MS 문서: Requesting to Rename an Allocation](https://learn.microsoft.com/en-gb/windows-hardware/drivers/display/requesting-to-rename-an-allocation))
 - 제출 시간의 거의 전부가 **`memcpy`**다. 즉 이 지표는 드라이버/GPU가 아니라 **CPU가 정점을 복사하는 비용**이다.
-- 정지가 이동보다 memcpy가 느린 것(0.220→0.349)은 CPU측 효과(캐시 온기·클럭 스케일링)이며,
+- 정지가 이동보다 memcpy가 느린 것(0.331→0.349)은 CPU측 효과(캐시가 식고 클럭이 내려감)이며,
   총 프레임 시간이 동일하므로 실제 성능 저하는 아니다.
 
-→ 숫자를 그냥 믿지 않고 **쪼개서 원인을 데이터로 확인**한 예.
+→ 숫자를 그냥 믿지 않고 **구성 요소로 분해해 원인을 데이터로 확인**한 예.
+(이 두 줄은 창 제목 표시줄에 그대로 찍히며, 포트폴리오 페이지에 그 화면을 실어 두었다.)
 
 **두 단계를 함께 보는 이유:** 정적(2,900배)은 배칭의 상한을, 동적(약 5배)은 실제 게임에서 받는
 실질 이득을 보여준다. 핵심은 같다 — **&ldquo;작은 업로드·드로우 N번&rdquo;을 &ldquo;큰 업로드·드로우 1번&rdquo;으로
@@ -147,12 +148,14 @@ Instanced는 정점 대신 **인스턴스 N개(약 1/3 데이터)**만 올린다
 src/
   main.cpp       진입점. 창과 렌더러를 연결하고 게임 루프를 돌린다.
   Window.*       Win32 창 하나. D3D를 모른다. 크기 변경·키 입력은 콜백으로만 알린다.
-  Renderer.*     디바이스·스왑체인·스프라이트 버퍼를 소유하고, Naive/Batched로 한 프레임을 그린다.
+  Renderer.*     디바이스·스왑체인·스프라이트 버퍼를 소유하고,
+                 Naive/Batched/Instanced 세 경로로 한 프레임을 그린다.
   FrameTimer.h   QueryPerformanceCounter 기반 평균 FPS / 프레임 시간(ms) 측정.
   Common.*       COM 스마트 포인터 별칭, HRESULT 검사 매크로, exe 기준 경로 해석.
 shaders/
-  Sprite.vs.hlsl 픽셀 좌표 -> NDC 변환, UV 전달.
-  Sprite.ps.hlsl 아틀라스 샘플 × 정점 색. 알파 블렌딩으로 도형 가장자리 처리.
+  Sprite.vs.hlsl          Naive·Batched 공용. 픽셀 좌표 -> NDC 변환, UV 전달.
+  SpriteInstanced.vs.hlsl 인스턴싱 전용. 단위 코너 × 인스턴스 크기 + 인스턴스 위치.
+  Sprite.ps.hlsl          세 모드 공용. 아틀라스 샘플 × 정점 색. 알파 블렌딩.
 ```
 
 ## 텍스처 아틀라스
